@@ -29,6 +29,7 @@ import {
   effectiveWorktreeAgentRowStartedAt,
   tabFromWorktreeAttributedStatusEntry
 } from './worktree-agent-row-fallback-tab'
+import { resolveStaleAgentRowState } from './stale-agent-row-state'
 
 /**
  * Resolves the sidebar row agent type, prioritizing launch agent configuration
@@ -235,11 +236,15 @@ export function buildWorktreeAgentRows(args: {
     for (const entry of explicitEntries) {
       const rowEntry = entryWithRuntimeOrchestration(entry, args.runtimeAgentOrchestrationByPaneKey)
       const isFresh = isExplicitAgentStatusFresh(rowEntry, args.now, AGENT_STATUS_STALE_AFTER_MS)
-      const shouldDecay =
-        !isFresh &&
-        (rowEntry.state === 'working' ||
-          rowEntry.state === 'blocked' ||
-          rowEntry.state === 'waiting')
+      const rowState = isFresh
+        ? rowEntry.state
+        : resolveStaleAgentRowState({
+            entry: rowEntry,
+            tab,
+            runtimePaneTitlesByTabId: args.runtimePaneTitlesByTabId,
+            ptyIdsByTabId: args.ptyIdsByTabId,
+            terminalLayoutsByTabId: args.terminalLayoutsByTabId
+          })
       const startedAt = effectiveWorktreeAgentRowStartedAt(rowEntry)
       rows.push({
         paneKey: rowEntry.paneKey,
@@ -247,7 +252,7 @@ export function buildWorktreeAgentRows(args: {
         tab,
         agentType: resolveRowAgentType(rowEntry, tab),
         rowSource: 'live',
-        state: shouldDecay ? 'idle' : rowEntry.state,
+        state: rowState,
         startedAt
       })
       rows.push(...buildSubagentChildRows({ parentEntry: rowEntry, tab, parentIsFresh: isFresh }))

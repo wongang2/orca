@@ -267,6 +267,64 @@ describe('buildWorktreeAgentRows', () => {
     expect(done?.state).toBe('done')
   })
 
+  it('keeps a stale working entry active when its live pane title is still working', () => {
+    const staleAt = 1000
+    const now = staleAt + AGENT_STATUS_STALE_AFTER_MS + 1
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { launchAgent: 'codex' })],
+      entries: [
+        makeEntry(PANE_KEY_1, staleAt, {
+          state: 'working',
+          updatedAt: staleAt,
+          agentType: 'codex'
+        })
+      ],
+      retained: [],
+      runtimePaneTitlesByTabId: {
+        'tab-1': { 1: '⠴ aviv' }
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-codex'] },
+      terminalLayoutsByTabId: {
+        'tab-1': {
+          ...makeSinglePaneLayout(LEAF_ID_1),
+          ptyIdsByLeafId: { [LEAF_ID_1]: 'pty-codex' }
+        }
+      },
+      now
+    })
+
+    expect(rows.find((row) => row.paneKey === PANE_KEY_1)?.state).toBe('working')
+  })
+
+  it('does not trust a stale working title after its pane PTY is gone', () => {
+    const staleAt = 1000
+    const now = staleAt + AGENT_STATUS_STALE_AFTER_MS + 1
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { launchAgent: 'codex' })],
+      entries: [
+        makeEntry(PANE_KEY_1, staleAt, {
+          state: 'working',
+          updatedAt: staleAt,
+          agentType: 'codex'
+        })
+      ],
+      retained: [],
+      runtimePaneTitlesByTabId: {
+        'tab-1': { 1: '⠴ aviv' }
+      },
+      ptyIdsByTabId: { 'tab-1': [] },
+      terminalLayoutsByTabId: {
+        'tab-1': {
+          ...makeSinglePaneLayout(LEAF_ID_1),
+          ptyIdsByLeafId: { [LEAF_ID_1]: 'pty-codex' }
+        }
+      },
+      now
+    })
+
+    expect(rows.find((row) => row.paneKey === PANE_KEY_1)?.state).toBe('idle')
+  })
+
   it('renders live worktree-attributed entries even when their tab is absent', () => {
     const rows = buildWorktreeAgentRows({
       tabs: [],
