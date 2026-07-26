@@ -125,6 +125,29 @@ describe('buildTitleDerivedAgentRows', () => {
     expect(rows).toHaveLength(0)
   })
 
+  it('keeps a launched idle agent visible after its title returns to the workspace name', () => {
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { title: 'aviv', launchAgent: 'codex' })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: {
+        'tab-1': { 1: 'aviv' }
+      },
+      ptyIdsByTabId: { 'tab-1': ['pty-codex-idle'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      now: 2000
+    })
+
+    expect(
+      rows.map((row) => [
+        row.agentType,
+        row.state,
+        row.entry.prompt,
+        row.entry.lastAssistantMessage
+      ])
+    ).toEqual([['codex', 'idle', 'Codex', 'Idle']])
+  })
+
   it('uses runtime orchestration metadata for title-derived worker rows', () => {
     const parentPaneKey = makePaneKey('tab-parent', LEAF_ID_1)
     const childPaneKey = makePaneKey('tab-child', LEAF_ID_2)
@@ -255,7 +278,7 @@ describe('buildTitleDerivedAgentRows', () => {
     expect(rows).toHaveLength(0)
   })
 
-  it('does not turn generic Codex-launched task titles into Claude Code rows', () => {
+  it('keeps generic Codex-launched task titles attributed to Codex', () => {
     const launchAgent: TuiAgent = 'codex'
     const rows = buildWorktreeAgentRows({
       tabs: [makeTab('tab-1', { launchAgent })],
@@ -269,6 +292,6 @@ describe('buildTitleDerivedAgentRows', () => {
       now: 2000
     })
 
-    expect(rows).toHaveLength(0)
+    expect(rows.map((row) => [row.agentType, row.state])).toEqual([['codex', 'idle']])
   })
 })

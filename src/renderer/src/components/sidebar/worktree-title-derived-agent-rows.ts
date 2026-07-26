@@ -93,6 +93,14 @@ export function buildTitleDerivedAgentRows(args: {
         rows.push(row)
         args.seenPaneKeys.add(row.paneKey)
       }
+      addLaunchedAgentFallbackRow({
+        rows,
+        seenPaneKeys: args.seenPaneKeys,
+        tab,
+        leafId: resolveLaunchedAgentLeafId(tab, layout),
+        now: args.now,
+        runtimeAgentOrchestrationByPaneKey: args.runtimeAgentOrchestrationByPaneKey
+      })
       continue
     }
 
@@ -108,6 +116,14 @@ export function buildTitleDerivedAgentRows(args: {
       runtimeAgentOrchestrationByPaneKey: args.runtimeAgentOrchestrationByPaneKey
     })
     if (!row || args.seenPaneKeys.has(row.paneKey)) {
+      addLaunchedAgentFallbackRow({
+        rows,
+        seenPaneKeys: args.seenPaneKeys,
+        tab,
+        leafId,
+        now: args.now,
+        runtimeAgentOrchestrationByPaneKey: args.runtimeAgentOrchestrationByPaneKey
+      })
       continue
     }
     rows.push(row)
@@ -115,6 +131,62 @@ export function buildTitleDerivedAgentRows(args: {
   }
 
   return rows
+}
+
+function resolveLaunchedAgentLeafId(
+  tab: TerminalTab,
+  layout: TerminalLayoutSnapshot | undefined
+): string | null | undefined {
+  if (tab.ptyId) {
+    const matchingLeaf = Object.entries(layout?.ptyIdsByLeafId ?? {}).find(
+      ([, ptyId]) => ptyId === tab.ptyId
+    )?.[0]
+    if (matchingLeaf) {
+      return matchingLeaf
+    }
+  }
+  return layout?.activeLeafId ?? collectLeafIds(layout?.root ?? null)[0]
+}
+
+function addLaunchedAgentFallbackRow(args: {
+  rows: DashboardAgentRow[]
+  seenPaneKeys: Set<string>
+  tab: TerminalTab
+  leafId: string | null | undefined
+  now: number
+  runtimeAgentOrchestrationByPaneKey?: Record<string, AgentStatusOrchestrationContext>
+}): void {
+  if (!args.tab.launchAgent || !args.leafId || !isTerminalLeafId(args.leafId)) {
+    return
+  }
+  const paneKey = makePaneKey(args.tab.id, args.leafId)
+  if (args.seenPaneKeys.has(paneKey)) {
+    return
+  }
+  const agentType = args.tab.launchAgent
+  const orchestration = args.runtimeAgentOrchestrationByPaneKey?.[paneKey]
+  const entry: AgentStatusEntry = {
+    paneKey,
+    state: 'working',
+    prompt: formatAgentTypeLabel(agentType),
+    updatedAt: args.now,
+    stateStartedAt: args.tab.createdAt,
+    stateHistory: [],
+    agentType,
+    terminalTitle: args.tab.title,
+    lastAssistantMessage: 'Idle',
+    ...(orchestration ? { orchestration } : {})
+  }
+  args.rows.push({
+    paneKey,
+    entry,
+    tab: args.tab,
+    agentType,
+    rowSource: 'live',
+    state: 'idle',
+    startedAt: args.tab.createdAt
+  })
+  args.seenPaneKeys.add(paneKey)
 }
 
 /**
