@@ -19,6 +19,7 @@ import {
   normalizeCompatibleAgentTitleForOwner,
   resolveCompatibleAgentTypeForOwner
 } from '../../../../shared/agent-title-owner'
+import { addLiveTerminalFallbackRow } from './worktree-live-terminal-fallback-row'
 
 const EMPTY_RUNTIME_TITLES: Record<string, Record<number, string>> = {}
 const EMPTY_LIVE_PTY_IDS: Record<string, string[]> = {}
@@ -50,6 +51,7 @@ export function buildTitleDerivedAgentRows(args: {
   ptyIdsByTabId?: Record<string, string[]>
   terminalLayoutsByTabId?: Record<string, TerminalLayoutSnapshot | undefined>
   runtimeAgentOrchestrationByPaneKey?: Record<string, AgentStatusOrchestrationContext>
+  includeUnidentifiedTerminalTabs?: boolean
   seenPaneKeys: Set<string>
   now: number
 }): DashboardAgentRow[] {
@@ -93,12 +95,13 @@ export function buildTitleDerivedAgentRows(args: {
         rows.push(row)
         args.seenPaneKeys.add(row.paneKey)
       }
-      addLaunchedAgentFallbackRow({
+      addLiveTerminalFallbackRow({
         rows,
         seenPaneKeys: args.seenPaneKeys,
         tab,
-        leafId: resolveLaunchedAgentLeafId(tab, layout),
+        leafId: resolveLiveTerminalLeafId(tab, layout),
         now: args.now,
+        includeUnidentifiedTerminalTabs: args.includeUnidentifiedTerminalTabs,
         runtimeAgentOrchestrationByPaneKey: args.runtimeAgentOrchestrationByPaneKey
       })
       continue
@@ -116,12 +119,13 @@ export function buildTitleDerivedAgentRows(args: {
       runtimeAgentOrchestrationByPaneKey: args.runtimeAgentOrchestrationByPaneKey
     })
     if (!row || args.seenPaneKeys.has(row.paneKey)) {
-      addLaunchedAgentFallbackRow({
+      addLiveTerminalFallbackRow({
         rows,
         seenPaneKeys: args.seenPaneKeys,
         tab,
         leafId,
         now: args.now,
+        includeUnidentifiedTerminalTabs: args.includeUnidentifiedTerminalTabs,
         runtimeAgentOrchestrationByPaneKey: args.runtimeAgentOrchestrationByPaneKey
       })
       continue
@@ -133,7 +137,7 @@ export function buildTitleDerivedAgentRows(args: {
   return rows
 }
 
-function resolveLaunchedAgentLeafId(
+function resolveLiveTerminalLeafId(
   tab: TerminalTab,
   layout: TerminalLayoutSnapshot | undefined
 ): string | null | undefined {
@@ -146,47 +150,6 @@ function resolveLaunchedAgentLeafId(
     }
   }
   return layout?.activeLeafId ?? collectLeafIds(layout?.root ?? null)[0]
-}
-
-function addLaunchedAgentFallbackRow(args: {
-  rows: DashboardAgentRow[]
-  seenPaneKeys: Set<string>
-  tab: TerminalTab
-  leafId: string | null | undefined
-  now: number
-  runtimeAgentOrchestrationByPaneKey?: Record<string, AgentStatusOrchestrationContext>
-}): void {
-  if (!args.tab.launchAgent || !args.leafId || !isTerminalLeafId(args.leafId)) {
-    return
-  }
-  const paneKey = makePaneKey(args.tab.id, args.leafId)
-  if (args.seenPaneKeys.has(paneKey)) {
-    return
-  }
-  const agentType = args.tab.launchAgent
-  const orchestration = args.runtimeAgentOrchestrationByPaneKey?.[paneKey]
-  const entry: AgentStatusEntry = {
-    paneKey,
-    state: 'working',
-    prompt: formatAgentTypeLabel(agentType),
-    updatedAt: args.now,
-    stateStartedAt: args.tab.createdAt,
-    stateHistory: [],
-    agentType,
-    terminalTitle: args.tab.title,
-    lastAssistantMessage: 'Idle',
-    ...(orchestration ? { orchestration } : {})
-  }
-  args.rows.push({
-    paneKey,
-    entry,
-    tab: args.tab,
-    agentType,
-    rowSource: 'live',
-    state: 'idle',
-    startedAt: args.tab.createdAt
-  })
-  args.seenPaneKeys.add(paneKey)
 }
 
 /**

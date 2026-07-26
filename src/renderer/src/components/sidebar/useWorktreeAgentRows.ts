@@ -104,6 +104,7 @@ export function useWorktreeAgentRows(worktreeId: string, active = true): Dashboa
         ptyIdsByTabId,
         terminalLayoutsByTabId,
         runtimeAgentOrchestrationByPaneKey,
+        includeUnidentifiedTerminalTabs: true,
         now
       })
     )

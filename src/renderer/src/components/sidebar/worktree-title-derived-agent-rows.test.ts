@@ -148,6 +148,28 @@ describe('buildTitleDerivedAgentRows', () => {
     ).toEqual([['codex', 'idle', 'Codex', 'Idle']])
   })
 
+  it('keeps a live blank terminal tab visible without an agent launch identity', () => {
+    const rows = buildWorktreeAgentRows({
+      tabs: [makeTab('tab-1', { title: '', launchAgent: undefined })],
+      entries: [],
+      retained: [],
+      runtimePaneTitlesByTabId: {},
+      ptyIdsByTabId: { 'tab-1': ['pty-blank'] },
+      terminalLayoutsByTabId: { 'tab-1': makeSingleLayout(LEAF_ID_1) },
+      includeUnidentifiedTerminalTabs: true,
+      now: 2000
+    })
+
+    expect(
+      rows.map((row) => [
+        row.agentType,
+        row.state,
+        row.entry.prompt,
+        row.entry.lastAssistantMessage
+      ])
+    ).toEqual([['unknown', 'idle', 'Terminal', 'Terminal']])
+  })
+
   it('uses runtime orchestration metadata for title-derived worker rows', () => {
     const parentPaneKey = makePaneKey('tab-parent', LEAF_ID_1)
     const childPaneKey = makePaneKey('tab-child', LEAF_ID_2)

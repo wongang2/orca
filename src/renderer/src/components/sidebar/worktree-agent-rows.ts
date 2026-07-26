@@ -209,6 +209,7 @@ export function buildWorktreeAgentRows(args: {
   ptyIdsByTabId?: Record<string, string[]>
   terminalLayoutsByTabId?: Record<string, TerminalLayoutSnapshot | undefined>
   runtimeAgentOrchestrationByPaneKey?: Record<string, AgentStatusOrchestrationContext>
+  includeUnidentifiedTerminalTabs?: boolean
   now: number
 }): DashboardAgentRow[] {
   const rows: DashboardAgentRow[] = []
