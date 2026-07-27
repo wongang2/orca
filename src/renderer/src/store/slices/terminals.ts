@@ -3090,6 +3090,11 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         Object.entries(session.tabsByWorktree)
           .filter(([worktreeId]) => validWorktreeIds.has(worktreeId))
           .map(([worktreeId, tabs]) => {
+            const generatedTitleByTerminalId = new Map(
+              (session.unifiedTabs?.[worktreeId] ?? [])
+                .filter((tab) => tab.contentType === 'terminal' && tab.generatedLabel?.trim())
+                .map((tab) => [tab.entityId, tab.generatedLabel!.trim()])
+            )
             const quickCommandLabelByTerminalId = new Map(
               (session.unifiedTabs?.[worktreeId] ?? [])
                 .filter((tab) => tab.contentType === 'terminal' && tab.quickCommandLabel?.trim())
@@ -3104,10 +3109,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
                 })
                 .sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt - b.createdAt)
                 .map((tab, index) => {
+                  const generatedTitle =
+                    tab.generatedTitle?.trim() || generatedTitleByTerminalId.get(tab.id)
                   const quickCommandLabel =
                     tab.quickCommandLabel?.trim() || quickCommandLabelByTerminalId.get(tab.id)
                   return {
                     ...clearTransientTerminalState(tab, index),
+                    ...(generatedTitle ? { generatedTitle } : {}),
                     ...(quickCommandLabel ? { quickCommandLabel } : {}),
                     sortOrder: index,
                     pendingActivationSpawn: true

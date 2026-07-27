@@ -96,6 +96,8 @@ import {
   FLOATING_TERMINAL_WORKTREE_ID,
   getDefaultWorkspaceSession
 } from '../../../../shared/constants'
+import { getAgentRowConversationName } from '../../../../shared/agent-row-conversation-name'
+import { resolveTerminalTabTitle } from '../../../../shared/tab-title-resolution'
 import { folderWorkspaceKey, worktreeWorkspaceKey } from '../../../../shared/workspace-scope'
 import {
   createTestStore,
@@ -145,6 +147,74 @@ describe('hydrateWorkspaceSession', () => {
       ptyIdsByLeafId: { 'pane:1': 'daemon-session-1' },
       buffersByLeafId: { 'pane:1': 'buffer' }
     })
+  })
+
+  it('restores a generated terminal title from unified tab metadata', () => {
+    const store = createTestStore()
+    const worktreeId = 'repo1::/wt-1'
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1', path: '/wt-1' })]
+      }
+    })
+
+    const session: WorkspaceSessionState = {
+      ...getDefaultWorkspaceSession(),
+      activeRepoId: 'repo1',
+      activeWorktreeId: worktreeId,
+      activeTabId: 'tab-1',
+      tabsByWorktree: {
+        [worktreeId]: [
+          makeTab({
+            id: 'tab-1',
+            worktreeId,
+            title: 'orca',
+            generatedTitle: undefined
+          })
+        ]
+      },
+      unifiedTabs: {
+        [worktreeId]: [
+          {
+            id: 'tab-1',
+            entityId: 'tab-1',
+            groupId: 'group-1',
+            worktreeId,
+            contentType: 'terminal',
+            label: 'orca',
+            generatedLabel: 'Fix screenshot attachments',
+            customLabel: null,
+            color: null,
+            sortOrder: 0,
+            createdAt: 1,
+            isPreview: false,
+            isPinned: false
+          }
+        ]
+      },
+      tabGroups: {
+        [worktreeId]: [
+          {
+            id: 'group-1',
+            worktreeId,
+            activeTabId: 'tab-1',
+            tabOrder: ['tab-1']
+          }
+        ]
+      }
+    }
+
+    store.getState().hydrateWorkspaceSession(session)
+    for (const liveTitle of ['⠇ orca', 'Codex working', 'Codex ready', '⠋ orca']) {
+      store.getState().updateTabTitle('tab-1', liveTitle)
+
+      const terminalTab = store.getState().tabsByWorktree[worktreeId]?.[0]
+      expect(terminalTab?.generatedTitle).toBe('Fix screenshot attachments')
+      expect(resolveTerminalTabTitle(terminalTab!, true)).toBe('Fix screenshot attachments')
+      expect(getAgentRowConversationName(terminalTab!, 'codex', true)).toBe(
+        'Fix screenshot attachments'
+      )
+    }
   })
 
   it('hydrates runtime-owned tabs from host partitions before remote catalogs load', () => {

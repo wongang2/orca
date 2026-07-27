@@ -19,12 +19,13 @@ export function resolveStaleAgentRowState({
   ptyIdsByTabId,
   terminalLayoutsByTabId
 }: StaleAgentRowStateArgs): AgentStatusState | 'idle' {
-  if (entry.state !== 'working') {
-    return entry.state === 'done' ? 'done' : 'idle'
+  const fallbackState = entry.state === 'done' ? 'done' : 'idle'
+  if (entry.state !== 'working' && entry.state !== 'done') {
+    return fallbackState
   }
   const parsed = parsePaneKey(entry.paneKey)
   if (!parsed) {
-    return 'idle'
+    return fallbackState
   }
   const layout = terminalLayoutsByTabId?.[tab.id]
   const livePtyIds = ptyIdsByTabId?.[tab.id] ?? []
@@ -33,7 +34,7 @@ export function resolveStaleAgentRowState({
     ? livePtyIds.includes(layoutPtyId)
     : livePtyIds.length === 1 && (!layout?.root || layout.root.type === 'leaf')
   if (!hasLivePty) {
-    return 'idle'
+    return fallbackState
   }
   const titleResolution = resolveRuntimePaneTitleLeafResolution(
     layout,
@@ -41,5 +42,5 @@ export function resolveStaleAgentRowState({
     parsed.leafId
   )
   const title = titleResolution.title ?? (titleResolution.hasAnyPaneTitle ? null : tab.title)
-  return detectAgentSendTitleStatus(title) === 'working' ? 'working' : 'idle'
+  return detectAgentSendTitleStatus(title) === 'working' ? 'working' : fallbackState
 }
