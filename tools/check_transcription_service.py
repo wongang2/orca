@@ -102,22 +102,15 @@ ENTRYPOINT_WIRING = re.compile(
     r"(?:"
     r"\b(?:from|import)\s+[\w.]*"
     r"(?:transcription[_-]?quality|quality[_-]?contract)\b|"
+    r"\bfrom\s+[\w.]+\s+import\s+[^\n]*(?:Provenance|TranscriptionQuality)\b|"
     r"\bfrom\s+['\"][^'\"]*(?:transcription[_-]?quality|quality[_-]?contract)"
     r"[^'\"]*['\"]|"
     r"\brequire\s*\(\s*['\"][^'\"]*"
     r"(?:transcription[_-]?quality|quality[_-]?contract)[^'\"]*['\"]\s*\)|"
-    r"\b(?:TranscriptionProvenance|Provenance|TranscriptionQuality|"
-    r"meetingTranscriptionQualityRecord)\b\s*(?:\(|\{|:|=)|"
-    r"\b[A-Za-z0-9_]*(?:QualityRun|Provenance)\s*\(|"
-    r"\b(?:build|attach|persist|runtime|new)[A-Za-z0-9_]*"
-    r"(?:provenance|transcription[_-]?quality)[A-Za-z0-9_]*\s*\(|"
-    r"['\"](?:quality_status|qualityStatus|delivery_status|deliveryStatus|"
-    r"provenance)['\"]\s*:|"
-    r"\[\s*['\"](?:quality_status|qualityStatus|delivery_status|deliveryStatus|"
-    r"provenance)['\"]\s*\]|"
-    r"\b(?:quality_status|qualityStatus|delivery_status|deliveryStatus|"
-    r"provenance)\b\s*(?:[:=,}]|\.\w|\[)|"
-    r"\bPendingDictationInsertStore\.save\s*\(\s*result\s*:"
+    r"\b[A-Za-z_][A-Za-z0-9_]*(?:Quality|Provenance|Delivery)"
+    r"[A-Za-z0-9_]*\s*\(|"
+    r"\bPendingDictationInsertStore\.save\s*\(\s*result\s*:|"
+    r"\.\s*provenance\b"
     r")",
     re.I,
 )
@@ -214,11 +207,30 @@ def _source_paths(root: Path, ignored_roots: set[str]):
             yield rel_path, path
 
 
-def _has_code_wiring(text: str) -> bool:
-    code = "\n".join(
+def _has_code_wiring(text: str, suffix: str) -> bool:
+    code_lines = [
         line
         for line in text.splitlines()
         if not line.lstrip().startswith(("#", "//", "/*", "*"))
+    ]
+    if suffix == ".sh":
+        shell_code = "\n".join(code_lines)
+        required_emissions = (
+            r"(?:echo|printf)[^\n]*audio_sha256\s*:",
+            r"(?:echo|printf)[^\n]*engine_id\s*:",
+            r"(?:echo|printf)[^\n]*quality_status\s*:",
+            r"(?:echo|printf)[^\n]*delivery_status\s*:",
+        )
+        return all(re.search(pattern, shell_code, re.I) for pattern in required_emissions)
+    code = "\n".join(
+        line
+        for line in code_lines
+        if not re.match(
+            r"^\s*(?:async\s+def|def|class|type|data\s+class|"
+            r"(?:public|private|internal|fileprivate)?\s*(?:func|struct|class)|"
+            r"function)\b",
+            line,
+        )
     )
     return ENTRYPOINT_WIRING.search(code) is not None
 
@@ -403,7 +415,7 @@ def check(root: Path) -> list[str]:
         text = path.read_text(encoding="utf-8", errors="replace")
         if RUNTIME_FORBIDDEN.search(text):
             errors.append(f"runtime entrypoint 외부 teacher 의존 금지 위반({rel}): VITO/RTZR 참조")
-        if not _has_code_wiring(text):
+        if not _has_code_wiring(text, path.suffix.lower()):
             errors.append(f"entrypoint 실제 품질 계약 배선 누락({rel})")
 
     rights_rel = manifest.get("rights_registry")
