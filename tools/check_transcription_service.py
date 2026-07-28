@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from functools import lru_cache
 import json
 import os
 import re
@@ -206,7 +207,71 @@ def _source_paths(root: Path, ignored_roots: set[str]):
             yield rel_path, path
 
 
-def _has_code_wiring(text: str, suffix: str) -> bool:
+@lru_cache(maxsize=None)
+def _python_module_paths(root: Path, module: str) -> tuple[Path, ...]:
+    parts = module.split(".")
+    candidates = {
+        path
+        for path in root.glob("**/" + "/".join(parts) + ".py")
+        if tuple(path.with_suffix("").parts[-len(parts):]) == tuple(parts)
+    }
+    candidates.update(
+        path
+        for path in root.glob("**/" + "/".join(parts) + "/__init__.py")
+        if tuple(path.parent.parts[-len(parts):]) == tuple(parts)
+    )
+    return tuple(sorted(candidates))
+
+
+@lru_cache(maxsize=None)
+def _python_module_exports(path: Path, symbol: str) -> bool:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, SyntaxError):
+        return False
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == symbol:
+                return True
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if (alias.asname or alias.name) == symbol:
+                    return True
+    return False
+
+
+def _python_contract_source_allowed(
+    path: Path,
+    root: Path,
+    contract_module: str,
+) -> bool:
+    contract_path = (root / contract_module).resolve()
+    resolved = path.resolve()
+    if resolved == contract_path:
+        return True
+    if path.name == "__init__.py" and path.parent.resolve() == contract_path.parent:
+        return True
+    relative = path.relative_to(root).as_posix().lower()
+    return any(
+        marker in relative
+        for marker in (
+            "transcription_quality",
+            "transcription-quality",
+            "quality_contract",
+            "quality-contract",
+            "dictation_quality",
+            "dictation-quality",
+        )
+    )
+
+
+def _has_code_wiring(
+    text: str,
+    suffix: str,
+    *,
+    root: Path | None = None,
+    contract_module: str = "",
+) -> bool:
     code_lines = [
         line
         for line in text.splitlines()
@@ -226,8 +291,8 @@ def _has_code_wiring(text: str, suffix: str) -> bool:
             tree = ast.parse(text)
         except SyntaxError:
             return False
-        imported_callables: dict[str, int] = {}
-        imported_modules: dict[str, int] = {}
+        imported_callables: dict[str, tuple[int, str, str]] = {}
+        imported_modules: dict[str, tuple[int, str]] = {}
         marker = re.compile(r"(?:quality|provenance|delivery)", re.I)
         action = re.compile(
             r"(?:build|new|create|make|validate|attach|persist|save|record|"
@@ -240,11 +305,15 @@ def _has_code_wiring(text: str, suffix: str) -> bool:
                     if marker.search(alias.name):
                         imported_modules[
                             alias.asname or alias.name.split(".", 1)[0]
-                        ] = node.lineno
+                        ] = (node.lineno, alias.name)
             elif isinstance(node, ast.ImportFrom):
                 for alias in node.names:
                     if marker.search(alias.name):
-                        imported_callables[alias.asname or alias.name] = node.lineno
+                        imported_callables[alias.asname or alias.name] = (
+                            node.lineno,
+                            node.module or "",
+                            alias.name,
+                        )
         parents: dict[ast.AST, ast.AST] = {}
         for parent in ast.walk(tree):
             for child in ast.iter_child_nodes(parent):
@@ -273,25 +342,42 @@ def _has_code_wiring(text: str, suffix: str) -> bool:
             if not isinstance(node, ast.Call) or not is_reachable(node):
                 continue
             if isinstance(node.func, ast.Name):
-                imported_at = imported_callables.get(node.func.id)
-                if imported_at is not None and imported_at < node.lineno:
-                    if action.search(node.func.id) or call_has_provenance_fields(node):
+                imported = imported_callables.get(node.func.id)
+                if imported is not None and imported[0] < node.lineno:
+                    source_allowed = root is None or any(
+                        _python_contract_source_allowed(
+                            path, root, contract_module
+                        )
+                        and _python_module_exports(path, imported[2])
+                        for path in _python_module_paths(root, imported[1])
+                    )
+                    if source_allowed and (
+                        action.search(node.func.id)
+                        or call_has_provenance_fields(node)
+                    ):
                         return True
             if (
                 isinstance(node.func, ast.Attribute)
                 and isinstance(node.func.value, ast.Name)
             ):
-                imported_at = imported_modules.get(node.func.value.id)
+                imported = imported_modules.get(node.func.value.id)
                 if (
-                    imported_at is not None
-                    and imported_at < node.lineno
+                    imported is not None
+                    and imported[0] < node.lineno
                     and marker.search(node.func.attr)
                     and (
                         action.search(node.func.attr)
                         or call_has_provenance_fields(node)
                     )
                 ):
-                    return True
+                    if root is None or any(
+                        _python_contract_source_allowed(
+                            path, root, contract_module
+                        )
+                        and _python_module_exports(path, node.func.attr)
+                        for path in _python_module_paths(root, imported[1])
+                    ):
+                        return True
         return False
     if suffix == ".go":
         has_quality_record = re.search(
@@ -499,7 +585,12 @@ def check(root: Path) -> list[str]:
         text = path.read_text(encoding="utf-8", errors="replace")
         if RUNTIME_FORBIDDEN.search(text):
             errors.append(f"runtime entrypoint 외부 teacher 의존 금지 위반({rel}): VITO/RTZR 참조")
-        if not _has_code_wiring(text, path.suffix.lower()):
+        if not _has_code_wiring(
+            text,
+            path.suffix.lower(),
+            root=root,
+            contract_module=str(manifest.get("contract_module") or ""),
+        ):
             errors.append(f"entrypoint 실제 품질 계약 배선 누락({rel})")
 
     rights_rel = manifest.get("rights_registry")
