@@ -329,12 +329,20 @@ def _has_code_wiring(
             if isinstance(node.func, ast.Name):
                 imported = imported_callables.get(node.func.id)
                 if imported is not None and imported[0] < node.lineno:
-                    source_allowed = root is None or any(
-                        _python_contract_source_allowed(
-                            path, root, runtime_contract_modules
+                    module_paths = (
+                        ()
+                        if root is None
+                        else _python_module_paths(root, imported[1])
+                    )
+                    source_allowed = root is None or (
+                        bool(module_paths)
+                        and all(
+                            _python_contract_source_allowed(
+                                path, root, runtime_contract_modules
+                            )
+                            and _python_module_exports(path, imported[2])
+                            for path in module_paths
                         )
-                        and _python_module_exports(path, imported[2])
-                        for path in _python_module_paths(root, imported[1])
                     )
                     if source_allowed and (
                         action.search(node.func.id)
@@ -355,12 +363,20 @@ def _has_code_wiring(
                         or call_has_provenance_fields(node)
                     )
                 ):
-                    if root is None or any(
-                        _python_contract_source_allowed(
-                            path, root, runtime_contract_modules
+                    module_paths = (
+                        ()
+                        if root is None
+                        else _python_module_paths(root, imported[1])
+                    )
+                    if root is None or (
+                        bool(module_paths)
+                        and all(
+                            _python_contract_source_allowed(
+                                path, root, runtime_contract_modules
+                            )
+                            and _python_module_exports(path, node.func.attr)
+                            for path in module_paths
                         )
-                        and _python_module_exports(path, node.func.attr)
-                        for path in _python_module_paths(root, imported[1])
                     ):
                         return True
         return False
