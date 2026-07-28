@@ -63,8 +63,13 @@ RIGHTS_TOKENS = {
 PROMOTION_TEST_TOKENS = {"production", "PASS", "UNKNOWN"}
 DELIVERY_STATUSES = {"draft_unverified", "final_verified"}
 LIKELY_ENTRYPOINT_NAMES = re.compile(
-    r"(?:^|[/_.-])(?:asr|stt|transcrib(?:e|er|ing|tion)|"
-    r"speech[-_]?to[-_]?text|speech[-_]?runtime|whisper|vito|rtzr|diari[sz])",
+    r"(?:^|[/_.-])(?:asr|stt|dictat(?:e|ion)|transcrib(?:e|er|ing|tion)|"
+    r"speech[-_]?to[-_]?text|speech[-_]?runtime|voice[-_]?mode|"
+    r"whisper|vito|rtzr|diari[sz])",
+    re.I,
+)
+DELIVERY_PATH_NAMES = re.compile(
+    r"(?:dictat(?:e|ion)|voice[-_]?mode|ime[-_]?service|gateway[/\\]run)",
     re.I,
 )
 RUNTIME_SIGNALS = re.compile(
@@ -74,6 +79,14 @@ RUNTIME_SIGNALS = re.compile(
     r"/audio/transcriptions|speech[-_ ]?to[-_ ]?text|"
     r"automatic speech recognition|audio transcription|"
     r"\b(?:URLSession|requests\.(?:post|get)|fetch|Worker)\s*\()",
+    re.I,
+)
+DELIVERY_SIGNALS = re.compile(
+    r"(?:PendingDictationInsertStore|commitText\s*\(|"
+    r"transcription\.(?:text|provenance)|"
+    r"(?:result|transcription_result)\.get\s*\(\s*['\"]transcript['\"]|"
+    r"(?:result|transcription_result)\s*\[\s*['\"]transcript['\"]\s*\]|"
+    r"['\"]transcript['\"]\s*:)",
     re.I,
 )
 RUNTIME_FORBIDDEN = re.compile(
@@ -112,7 +125,7 @@ def _as_set(value: object) -> set[str]:
 
 
 def _likely_entrypoints(root: Path, ignored_roots: set[str]) -> set[str]:
-    """실제 엔진/API 호출 징후가 있는 음성/STT runtime 후보만 찾는다."""
+    """실제 엔진 호출 또는 사용자 delivery 징후가 있는 STT 경로를 찾는다."""
     found: set[str] = set()
     for directory, child_dirs, filenames in os.walk(root):
         relative_directory = Path(directory).relative_to(root).as_posix()
@@ -133,13 +146,19 @@ def _likely_entrypoints(root: Path, ignored_roots: set[str]) -> set[str]:
             if _is_test_path(rel_path):
                 continue
             rel = rel_path.as_posix()
-            if not LIKELY_ENTRYPOINT_NAMES.search(rel):
-                continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            if RUNTIME_SIGNALS.search(text):
+            runtime_candidate = (
+                LIKELY_ENTRYPOINT_NAMES.search(rel)
+                and RUNTIME_SIGNALS.search(text)
+            )
+            delivery_candidate = (
+                DELIVERY_PATH_NAMES.search(rel)
+                and DELIVERY_SIGNALS.search(text)
+            )
+            if runtime_candidate or delivery_candidate:
                 found.add(rel)
     return found
 
