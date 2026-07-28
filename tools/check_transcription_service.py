@@ -15,6 +15,7 @@ from pathlib import Path
 REQUIRED_KEYS = {
     "contract_version",
     "contract_module",
+    "runtime_contract_modules",
     "profiles",
     "entrypoints",
     "evaluation_policy",
@@ -243,26 +244,10 @@ def _python_module_exports(path: Path, symbol: str) -> bool:
 def _python_contract_source_allowed(
     path: Path,
     root: Path,
-    contract_module: str,
+    runtime_contract_modules: tuple[str, ...],
 ) -> bool:
-    contract_path = (root / contract_module).resolve()
-    resolved = path.resolve()
-    if resolved == contract_path:
-        return True
-    if path.name == "__init__.py" and path.parent.resolve() == contract_path.parent:
-        return True
-    relative = path.relative_to(root).as_posix().lower()
-    return any(
-        marker in relative
-        for marker in (
-            "transcription_quality",
-            "transcription-quality",
-            "quality_contract",
-            "quality-contract",
-            "dictation_quality",
-            "dictation-quality",
-        )
-    )
+    allowed = {(root / value).resolve() for value in runtime_contract_modules}
+    return path.resolve() in allowed
 
 
 def _has_code_wiring(
@@ -270,7 +255,7 @@ def _has_code_wiring(
     suffix: str,
     *,
     root: Path | None = None,
-    contract_module: str = "",
+    runtime_contract_modules: tuple[str, ...] = (),
 ) -> bool:
     code_lines = [
         line
@@ -346,7 +331,7 @@ def _has_code_wiring(
                 if imported is not None and imported[0] < node.lineno:
                     source_allowed = root is None or any(
                         _python_contract_source_allowed(
-                            path, root, contract_module
+                            path, root, runtime_contract_modules
                         )
                         and _python_module_exports(path, imported[2])
                         for path in _python_module_paths(root, imported[1])
@@ -372,7 +357,7 @@ def _has_code_wiring(
                 ):
                     if root is None or any(
                         _python_contract_source_allowed(
-                            path, root, contract_module
+                            path, root, runtime_contract_modules
                         )
                         and _python_module_exports(path, node.func.attr)
                         for path in _python_module_paths(root, imported[1])
@@ -472,7 +457,11 @@ def check(root: Path) -> list[str]:
         errors.append("provenance_fields 누락: " + ", ".join(sorted(absent)))
 
     path_fields = ["contract_module", "evaluation_policy", "rights_registry", "smoke_evidence"]
-    list_path_fields = ["entrypoints", "regression_tests"]
+    list_path_fields = [
+        "entrypoints",
+        "runtime_contract_modules",
+        "regression_tests",
+    ]
     for key in path_fields:
         value = manifest.get(key)
         if not isinstance(value, str) or not value:
@@ -589,7 +578,11 @@ def check(root: Path) -> list[str]:
             text,
             path.suffix.lower(),
             root=root,
-            contract_module=str(manifest.get("contract_module") or ""),
+            runtime_contract_modules=tuple(
+                value
+                for value in manifest.get("runtime_contract_modules", [])
+                if isinstance(value, str)
+            ),
         ):
             errors.append(f"entrypoint 실제 품질 계약 배선 누락({rel})")
 

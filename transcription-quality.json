@@ -1,6 +1,7 @@
 {
   "contract_version": "1.0",
   "contract_module": "src/main/speech/dictation-quality-contract.ts",
+  "runtime_contract_modules": ["src/main/speech/dictation-quality-contract.ts"],
   "profiles": ["dictation"],
   "entrypoints": ["src/main/speech/stt-service.ts", "src/main/speech/stt-worker.ts"],
   "teacher_entrypoints": [],
