@@ -1,0 +1,28 @@
+name: Transcription quality contract
+
+on:
+  pull_request:
+    paths:
+      - "src/main/speech/**"
+      - "transcription-quality.json"
+      - "eval/dictation-*"
+      - "tools/check_transcription_service.py"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/main/speech/**"
+      - "transcription-quality.json"
+      - "eval/dictation-*"
+      - "tools/check_transcription_service.py"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: 모든 음성 전사 진입점·VITO 비의존 검증
+        run: python3 tools/check_transcription_service.py .
