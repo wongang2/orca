@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -100,16 +101,14 @@ RUNTIME_FORBIDDEN = re.compile(
 )
 ENTRYPOINT_WIRING = re.compile(
     r"(?:"
-    r"\b(?:from|import)\s+[\w.]*"
-    r"(?:transcription[_-]?quality|quality[_-]?contract)\b|"
-    r"\bfrom\s+[\w.]+\s+import\s+[^\n]*(?:Provenance|TranscriptionQuality)\b|"
-    r"\bfrom\s+['\"][^'\"]*(?:transcription[_-]?quality|quality[_-]?contract)"
-    r"[^'\"]*['\"]|"
-    r"\brequire\s*\(\s*['\"][^'\"]*"
-    r"(?:transcription[_-]?quality|quality[_-]?contract)[^'\"]*['\"]\s*\)|"
-    r"\b[A-Za-z_][A-Za-z0-9_]*(?:Quality|Provenance|Delivery)"
-    r"[A-Za-z0-9_]*\s*\(|"
+    r"\b(?=[A-Za-z_][A-Za-z0-9_]*\s*\()"
+    r"(?=[A-Za-z0-9_]*(?:build|new|create|make|validate|attach|persist|"
+    r"save|record|emit|apply|enforce|prepare|deliver))"
+    r"(?=[A-Za-z0-9_]*(?:Quality|Provenance|Delivery))"
+    r"[A-Za-z_][A-Za-z0-9_]*\s*\(|"
     r"\bPendingDictationInsertStore\.save\s*\(\s*result\s*:|"
+    r"\bprovenance\s*:\s*TranscriptionProvenance\s*\(|"
+    r"\bprovenance_owner\s*:\s*['\"]stt-service['\"]|"
     r"\.\s*provenance\b"
     r")",
     re.I,
@@ -211,7 +210,7 @@ def _has_code_wiring(text: str, suffix: str) -> bool:
     code_lines = [
         line
         for line in text.splitlines()
-        if not line.lstrip().startswith(("#", "//", "/*", "*"))
+        if not re.match(r"^\s*(?:#|//|/\*|\*(?:\s|/|$))", line)
     ]
     if suffix == ".sh":
         shell_code = "\n".join(code_lines)
@@ -222,6 +221,80 @@ def _has_code_wiring(text: str, suffix: str) -> bool:
             r"(?:echo|printf)[^\n]*delivery_status\s*:",
         )
         return all(re.search(pattern, shell_code, re.I) for pattern in required_emissions)
+    if suffix == ".py":
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return False
+        imported_callables: dict[str, int] = {}
+        imported_modules: dict[str, int] = {}
+        local_callables: dict[str, int] = {}
+        marker = re.compile(r"(?:quality|provenance|delivery)", re.I)
+        action = re.compile(
+            r"(?:build|new|create|make|validate|attach|persist|save|record|"
+            r"emit|apply|enforce|prepare|deliver)",
+            re.I,
+        )
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if marker.search(alias.name):
+                        imported_modules[
+                            alias.asname or alias.name.split(".", 1)[0]
+                        ] = node.lineno
+            elif isinstance(node, ast.ImportFrom):
+                module_matches = marker.search(node.module or "") is not None
+                for alias in node.names:
+                    if module_matches or marker.search(alias.name):
+                        imported_callables[alias.asname or alias.name] = node.lineno
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if marker.search(node.name) and action.search(node.name):
+                    local_callables[node.name] = node.lineno
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if (
+                isinstance(node.func, ast.Name)
+                and min(
+                    imported_callables.get(node.func.id, node.lineno),
+                    local_callables.get(node.func.id, node.lineno),
+                )
+                < node.lineno
+            ):
+                return True
+            if (
+                isinstance(node.func, ast.Attribute)
+                and (
+                    (
+                        isinstance(node.func.value, ast.Name)
+                        and imported_modules.get(
+                            node.func.value.id, node.lineno
+                        )
+                        < node.lineno
+                        and marker.search(node.func.attr)
+                    )
+                    or node.func.attr in {"provenance_fields", "runtime_provenance"}
+                    or (
+                        marker.search(node.func.attr)
+                        and action.search(node.func.attr)
+                    )
+                )
+            ):
+                return True
+        return False
+    if suffix == ".go":
+        has_quality_record = re.search(
+            r"\b[A-Za-z_][A-Za-z0-9_]*(?:Quality|Provenance|Delivery)"
+            r"[A-Za-z0-9_]*\s*\{",
+            text,
+            re.I,
+        )
+        if (
+            has_quality_record
+            and re.search(r"\bQualityStatus\s*:", text)
+            and re.search(r"\bDeliveryStatus\s*:", text)
+        ):
+            return True
     code = "\n".join(
         line
         for line in code_lines
