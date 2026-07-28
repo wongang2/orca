@@ -186,7 +186,11 @@ describe('SttService', () => {
 
     await service.startDictation('model-a', (event) => events.push(event), undefined, 'desktop')
     service.feedAudio(new Float32Array([0.25, -0.25]), 16000, 'desktop')
-    getLastWorker()!.emit('message', { type: 'final', text: 'local result' })
+    getLastWorker()!.emit('message', {
+      type: 'final',
+      text: 'local result',
+      provenance_owner: 'stt-service'
+    })
 
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -206,6 +210,30 @@ describe('SttService', () => {
         quality_status: 'UNKNOWN',
         audio_sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
       })
+    )
+  })
+
+  it('rejects a worker transcript that bypasses the provenance owner boundary', async () => {
+    const events: Record<string, unknown>[] = []
+    const service = new SttService({
+      getModelState: vi.fn().mockResolvedValue({ id: 'model-a', status: 'ready' }),
+      getModelDir: vi.fn().mockReturnValue('/tmp/model-a')
+    } as never)
+
+    await service.startDictation(
+      'model-a',
+      (event) => events.push(event as Record<string, unknown>),
+      undefined,
+      'desktop'
+    )
+    getLastWorker()!.emit('message', { type: 'final', text: 'unowned result' })
+
+    expect(events).toContainEqual({
+      type: 'error',
+      error: 'speech worker transcript missing provenance owner'
+    })
+    expect(events).not.toContainEqual(
+      expect.objectContaining({ type: 'final', text: 'unowned result' })
     )
   })
 
@@ -234,11 +262,19 @@ describe('SttService', () => {
       'desktop'
     )
     await Promise.resolve()
-    firstWorker!.emit('message', { type: 'final', text: 'old session final' })
+    firstWorker!.emit('message', {
+      type: 'final',
+      text: 'old session final',
+      provenance_owner: 'stt-service'
+    })
     firstWorker!.emit('message', { type: 'stopped' })
     await secondStart
 
-    getLastWorker()!.emit('message', { type: 'final', text: 'new session final' })
+    getLastWorker()!.emit('message', {
+      type: 'final',
+      text: 'new session final',
+      provenance_owner: 'stt-service'
+    })
 
     expect(firstEvents).toContainEqual(
       expect.objectContaining({

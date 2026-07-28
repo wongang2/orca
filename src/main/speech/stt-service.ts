@@ -10,7 +10,8 @@ import { OpenAiTranscriptionSession } from './openai-transcription-client'
 import { readOpenAiSpeechApiKey } from './openai-api-key-store'
 import {
   DictationQualityRun,
-  type TranscriptionQualityProvenance
+  type TranscriptionQualityProvenance,
+  type WorkerTranscriptionBoundary
 } from './dictation-quality-contract'
 
 export const START_DICTATION_TIMEOUT_MS = 60_000
@@ -28,8 +29,7 @@ export type SttEventSink = (event: SttEvent) => void
 
 type WorkerSttEvent =
   | { type: 'ready' }
-  | { type: 'partial'; text?: string }
-  | { type: 'final'; text?: string }
+  | WorkerTranscriptionBoundary
   | { type: 'stopped' }
   | { type: 'error'; error?: string }
 
@@ -251,10 +251,18 @@ export class SttService {
     const onWorkerMessage = (msg: WorkerSttEvent) => {
       if (this.worker === worker) {
         if (msg.type === 'partial' || msg.type === 'final') {
+          if (msg.provenance_owner !== 'stt-service') {
+            this.eventSink?.({
+              type: 'error',
+              error: 'speech worker transcript missing provenance owner'
+            })
+            return
+          }
           const { audio_sha256, engine_id, model_version, profile, quality_status, ...provenance } =
             this.qualityRun!.snapshot()
           this.eventSink?.({
-            ...msg,
+            type: msg.type,
+            text: msg.text,
             ...provenance,
             audio_sha256,
             engine_id,

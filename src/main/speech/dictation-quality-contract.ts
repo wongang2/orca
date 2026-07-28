@@ -26,6 +26,10 @@ export type TranscriptionQualityProvenance = {
   evaluation_id: null
 }
 
+export type WorkerTranscriptionBoundary =
+  | { type: 'partial'; text?: string; provenance_owner: 'stt-service' }
+  | { type: 'final'; text?: string; provenance_owner: 'stt-service' }
+
 type DictationQualityRunOptions = {
   modelId: string
   provider: 'local' | 'openai'

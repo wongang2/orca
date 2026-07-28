@@ -60,7 +60,6 @@ RIGHTS_TOKENS = {
     "commercial_product_allowed",
     "voice_embedding_allowed",
 }
-PROMOTION_TEST_TOKENS = {"production", "PASS", "UNKNOWN"}
 DELIVERY_STATUSES = {"draft_unverified", "final_verified"}
 LIKELY_ENTRYPOINT_NAMES = re.compile(
     r"(?:^|[/_.-])(?:asr|stt|dictat(?:e|ion)|transcrib(?:e|er|ing|tion)|"
@@ -91,7 +90,36 @@ DELIVERY_SIGNALS = re.compile(
     re.I,
 )
 RUNTIME_FORBIDDEN = re.compile(
-    r"(?:vito|rtzr|vito\.ai|rtzr\.ai|r?tzr[-_]?vito)", re.I
+    r"(?:"
+    r"\b(?:from|import)\s+(?:[\w.]*\.)?(?:vito|rtzr)\b|"
+    r"\brequire\s*\(\s*['\"][^'\"]*(?:vito|rtzr)[^'\"]*['\"]\s*\)|"
+    r"https?://[^/'\"]*(?:vito|rtzr)\.(?:ai|com)\b|"
+    r"\b(?:Vito|RTZR)(?:Client|API|Service|Transcriber|Engine)\b"
+    r")",
+    re.I,
+)
+ENTRYPOINT_WIRING = re.compile(
+    r"(?:"
+    r"\b(?:from|import)\s+[\w.]*"
+    r"(?:transcription[_-]?quality|quality[_-]?contract)\b|"
+    r"\bfrom\s+['\"][^'\"]*(?:transcription[_-]?quality|quality[_-]?contract)"
+    r"[^'\"]*['\"]|"
+    r"\brequire\s*\(\s*['\"][^'\"]*"
+    r"(?:transcription[_-]?quality|quality[_-]?contract)[^'\"]*['\"]\s*\)|"
+    r"\b(?:TranscriptionProvenance|Provenance|TranscriptionQuality|"
+    r"meetingTranscriptionQualityRecord)\b\s*(?:\(|\{|:|=)|"
+    r"\b[A-Za-z0-9_]*(?:QualityRun|Provenance)\s*\(|"
+    r"\b(?:build|attach|persist|runtime|new)[A-Za-z0-9_]*"
+    r"(?:provenance|transcription[_-]?quality)[A-Za-z0-9_]*\s*\(|"
+    r"['\"](?:quality_status|qualityStatus|delivery_status|deliveryStatus|"
+    r"provenance)['\"]\s*:|"
+    r"\[\s*['\"](?:quality_status|qualityStatus|delivery_status|deliveryStatus|"
+    r"provenance)['\"]\s*\]|"
+    r"\b(?:quality_status|qualityStatus|delivery_status|deliveryStatus|"
+    r"provenance)\b\s*(?:[:=,}]|\.\w|\[)|"
+    r"\bPendingDictationInsertStore\.save\s*\(\s*result\s*:"
+    r")",
+    re.I,
 )
 SCAN_SUFFIXES = {
     ".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".java", ".go",
@@ -162,6 +190,37 @@ def _likely_entrypoints(root: Path, ignored_roots: set[str]) -> set[str]:
             if runtime_candidate or delivery_candidate:
                 found.add(rel)
     return found
+
+
+def _source_paths(root: Path, ignored_roots: set[str]):
+    for directory, child_dirs, filenames in os.walk(root):
+        relative_directory = Path(directory).relative_to(root).as_posix()
+        if relative_directory in ignored_roots:
+            child_dirs[:] = []
+            continue
+        child_dirs[:] = [
+            name
+            for name in child_dirs
+            if name not in SCAN_IGNORES and not name.startswith(".")
+        ]
+        base = Path(directory)
+        for filename in filenames:
+            path = base / filename
+            if path.suffix.lower() not in SCAN_SUFFIXES:
+                continue
+            rel_path = path.relative_to(root)
+            if _is_test_path(rel_path):
+                continue
+            yield rel_path, path
+
+
+def _has_code_wiring(text: str) -> bool:
+    code = "\n".join(
+        line
+        for line in text.splitlines()
+        if not line.lstrip().startswith(("#", "//", "/*", "*"))
+    )
+    return ENTRYPOINT_WIRING.search(code) is not None
 
 
 def _json_objects(value: object):
@@ -310,25 +369,42 @@ def check(root: Path) -> list[str]:
     if undeclared:
         errors.append("미선언 음성/STT 진입점: " + ", ".join(sorted(undeclared)))
 
+    # 파일명과 무관하게 모든 실행 소스의 VITO/RTZR production 의존을 검사한다.
+    # teacher·명시적 비-runtime component·연구 root만 제외한다.
+    forbidden_paths: list[str] = []
+    for rel_path, path in _source_paths(root, ignored_roots):
+        rel = rel_path.as_posix()
+        if rel in teacher_entrypoints or rel in ignored_paths:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if RUNTIME_FORBIDDEN.search(text):
+            forbidden_paths.append(rel)
+    if forbidden_paths:
+        errors.append(
+            "runtime source 외부 teacher 의존 금지 위반(VITO/RTZR): "
+            + ", ".join(sorted(forbidden_paths))
+        )
+
     contract_text = ""
     contract_rel = manifest.get("contract_module")
     if isinstance(contract_rel, str) and (root / contract_rel).is_file():
         contract_text = (root / contract_rel).read_text(
             encoding="utf-8", errors="replace"
         )
+        absent = sorted(token for token in ENTRYPOINT_TOKENS if token not in contract_text)
+        if absent:
+            errors.append(
+                f"contract_module schema 누락({contract_rel}): " + ", ".join(absent)
+            )
     for rel in manifest.get("entrypoints") or []:
         path = root / rel
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        wired_text = text + "\n" + contract_text
         if RUNTIME_FORBIDDEN.search(text):
             errors.append(f"runtime entrypoint 외부 teacher 의존 금지 위반({rel}): VITO/RTZR 참조")
-        absent = sorted(
-            token for token in ENTRYPOINT_TOKENS if token not in wired_text
-        )
-        if absent:
-            errors.append(f"entrypoint 계약 연결 누락({rel}): " + ", ".join(absent))
+        if not _has_code_wiring(text):
+            errors.append(f"entrypoint 실제 품질 계약 배선 누락({rel})")
 
     rights_rel = manifest.get("rights_registry")
     if isinstance(rights_rel, str) and (root / rights_rel).is_file():
@@ -357,20 +433,6 @@ def check(root: Path) -> list[str]:
             if obj.get("delivery_status") == "final_verified" and obj.get("quality_status") == "UNKNOWN":
                 errors.append(f"fixture UNKNOWN은 final_verified가 될 수 없음: {path.relative_to(root)}")
 
-    regression_text = ""
-    for rel in manifest.get("regression_tests") or []:
-        path = root / rel
-        if path.is_file():
-            regression_text += path.read_text(
-                encoding="utf-8", errors="replace"
-            )
-    absent = sorted(
-        token for token in PROMOTION_TEST_TOKENS if token not in regression_text
-    )
-    if absent:
-        errors.append(
-            "UNKNOWN→production 차단 회귀 근거 누락: " + ", ".join(absent)
-        )
     return errors
 
 

@@ -3,6 +3,7 @@ import { parentPort, workerData } from 'node:worker_threads'
 import { resampleToRate } from './stt-audio-resample'
 import { OfflineAudioChunker } from './stt-offline-audio-chunker'
 import { buildHotwordsConfig, resolveFile, resolveTokens } from './stt-worker-model-config'
+import type { WorkerTranscriptionBoundary } from './dictation-quality-contract'
 
 type WorkerMessage =
   | {
@@ -30,6 +31,15 @@ let stream: any = null
 let isStreaming = false
 let offlineChunker: OfflineAudioChunker | null = null
 let offlineSampleRate = 16000
+
+function postTranscript(type: 'partial' | 'final', text: string): void {
+  const event: WorkerTranscriptionBoundary = {
+    type,
+    text,
+    provenance_owner: 'stt-service'
+  }
+  parentPort?.postMessage(event)
+}
 
 function loadSherpa(): any {
   const modulePath = workerData?.sherpaModulePath
@@ -223,13 +233,13 @@ function handleFeed(msg: Extract<WorkerMessage, { type: 'feed' }>): void {
       const result = JSON.parse(resultJson)
       const text = result?.text?.trim()
       if (text) {
-        parentPort?.postMessage({ type: 'partial', text })
+        postTranscript('partial', text)
       }
 
       if (sherpa.isEndpoint(recognizer, stream)) {
         const finalText = result?.text?.trim()
         if (finalText) {
-          parentPort?.postMessage({ type: 'final', text: finalText })
+          postTranscript('final', finalText)
         }
         sherpa.reset(recognizer, stream)
       }
@@ -247,7 +257,7 @@ function handleFeed(msg: Extract<WorkerMessage, { type: 'feed' }>): void {
         try {
           const text = decodeOfflineChunk(chunk)
           if (text) {
-            parentPort?.postMessage({ type: 'final', text })
+            postTranscript('final', text)
           }
         } catch (err) {
           firstError ??= err
@@ -278,7 +288,7 @@ function handleStop(): void {
       const result = JSON.parse(resultJson)
       const text = result?.text?.trim()
       if (text) {
-        parentPort?.postMessage({ type: 'final', text })
+        postTranscript('final', text)
       }
       stream = sherpa.createOnlineStream(recognizer)
     } else {
@@ -288,7 +298,7 @@ function handleStop(): void {
       if (remaining && remaining.length > 0) {
         const text = decodeOfflineChunk(remaining)
         if (text) {
-          parentPort?.postMessage({ type: 'final', text })
+          postTranscript('final', text)
         }
       }
       resetOfflineSessionState()
