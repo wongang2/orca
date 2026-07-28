@@ -69,7 +69,8 @@ LIKELY_ENTRYPOINT_NAMES = re.compile(
     re.I,
 )
 DELIVERY_PATH_NAMES = re.compile(
-    r"(?:dictat(?:e|ion)|voice[-_]?mode|ime[-_]?service|gateway[/\\]run)",
+    r"(?:dictat(?:e|ion)|voice[-_]?mode|ime[-_]?service|"
+    r"keyboard[-_]?input[-_]?view[-_]?controller|gateway[/\\]run)",
     re.I,
 )
 RUNTIME_SIGNALS = re.compile(
