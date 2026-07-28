@@ -3151,10 +3151,15 @@ export function seedCodexStateFromSnapshot(
   }
 }
 
-/** Sync the Codex lead record when the server infers an interrupt, so delayed child events cannot restore stale working state. */
-export function markCodexLeadTurnInterrupted(state: HookListenerState, paneKey: string): void {
+/** Sync a transcript-proven Codex completion with the listener's lead state. */
+export function markCodexLeadTurnDone(state: HookListenerState, paneKey: string): void {
   const lead = state.codexLeadStateByPaneKey.get(paneKey)
   state.codexLeadStateByPaneKey.set(paneKey, { state: 'done', model: lead?.model })
+}
+
+/** Sync the Codex lead record when the server infers an interrupt, so delayed child events cannot restore stale working state. */
+export function markCodexLeadTurnInterrupted(state: HookListenerState, paneKey: string): void {
+  markCodexLeadTurnDone(state, paneKey)
 }
 
 function codexLeadStateForHookEvent(
@@ -3891,7 +3896,10 @@ export function normalizeHookPayload(
   const launchToken = readStringField(record, 'launchToken')
 
   const hookPayloadRecord = hookPayload as Record<string, unknown>
-  let promptInteractionKey: string | undefined
+  let promptInteractionKey =
+    source === 'codex'
+      ? readFirstString(hookPayload as Record<string, unknown>, ['turn_id', 'turnId'])
+      : undefined
   const eventName =
     readFirstString(record, ['hook_event_name', 'hookEventName', 'hook_type', 'hookType']) ??
     hookPayloadRecord.hook_event_name ??

@@ -70,6 +70,7 @@ import {
   type AgentProviderSessionMetadata
 } from '../../shared/agent-session-resume'
 import { isCommandCodeNewTurnWhileWorking } from '../../shared/command-code-turn-boundary'
+import { CodexTranscriptCompletionTracker } from './codex-transcript-completion-tracker'
 
 export type { AgentHookSource }
 
@@ -77,6 +78,8 @@ export type { AgentHookSource }
 type EnrichedAgentHookEventPayload = AgentHookEventPayload & {
   receivedAt: number
   stateStartedAt: number
+  /** Durable root completion proof while child hooks continue updating the aggregate row. */
+  codexLeadCompleted?: true
 }
 
 export type AgentHookStatusChangeEntry = {
@@ -260,6 +263,7 @@ function sanitizeHydratedEntry(
     toolUseId: typeof record.toolUseId === 'string' ? record.toolUseId : undefined,
     toolAgentId: typeof record.toolAgentId === 'string' ? record.toolAgentId : undefined,
     toolAgentType: typeof record.toolAgentType === 'string' ? record.toolAgentType : undefined,
+    codexLeadCompleted: record.codexLeadCompleted === true ? true : undefined,
     providerSession,
     providerSessionOnly: providerSessionOnly ? true : undefined,
     payload,
@@ -487,6 +491,8 @@ export class AgentHookServer {
   private statusPersistTimer: ReturnType<typeof setTimeout> | null = null
   private assistantMessageRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private codexSubagentPollTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private codexSubagentPollBodyByPaneKey = new Map<string, unknown>()
+  private codexTranscriptCompletionTracker = new CodexTranscriptCompletionTracker()
   private promptSentDedupeByPaneKey = new Map<string, AgentPromptSentDedupeEntry>()
   private promptSentHashSalt = randomBytes(16).toString('hex')
   private closedAgentStatusTabIds = new Set<string>()
@@ -809,10 +815,16 @@ export class AgentHookServer {
       previous && previous.payload.state === payload.payload.state && !commandCodeNewTurn
         ? previous.stateStartedAt
         : now
+    const codexLeadCompleted =
+      payload.payload.agentType === 'codex' &&
+      ((!payload.toolAgentId &&
+        (payload.hookEventName === 'Stop' || payload.hookEventName === 'TranscriptTaskComplete')) ||
+        (payload.toolAgentId && previous?.codexLeadCompleted === true))
     return {
       ...payload,
       receivedAt: now,
-      stateStartedAt
+      stateStartedAt,
+      ...(codexLeadCompleted ? { codexLeadCompleted: true } : {})
     }
   }
 
@@ -1015,6 +1027,7 @@ export class AgentHookServer {
     const enriched = this.attachStatusTiming(effectivePayload, now)
     this.runtimeObservedStatusPaneKeys.add(enriched.paneKey)
     this.state.lastStatusByPaneKey.set(enriched.paneKey, enriched)
+    this.syncCodexTranscriptCompletion(enriched)
     this.scheduleStatusPersist()
     this.notifyStatusChangeListeners()
     this.emitEnrichedStatus(enriched)
@@ -1034,6 +1047,117 @@ export class AgentHookServer {
     }
   }
 
+  private syncCodexTranscriptCompletion(
+    entry: EnrichedAgentHookEventPayload,
+    options: { resumeHydrated?: boolean } = {}
+  ): void {
+    if (entry.payload.agentType !== 'codex') {
+      this.codexTranscriptCompletionTracker.drop(entry.paneKey)
+      return
+    }
+    // Why: child hooks share the root pane/session but carry their own turn id; they must not replace the root turn watcher.
+    if (entry.toolAgentId && options.resumeHydrated !== true) {
+      return
+    }
+    if (entry.payload.state === 'done') {
+      this.codexTranscriptCompletionTracker.drop(entry.paneKey)
+      return
+    }
+    if (entry.hookEventName !== 'UserPromptSubmit' && options.resumeHydrated !== true) {
+      return
+    }
+
+    const turnId = entry.promptInteractionKey
+    const providerSession = entry.providerSession
+    const transcriptPath = providerSession?.transcriptPath
+    if (entry.connectionId !== null || !providerSession || !transcriptPath) {
+      this.codexTranscriptCompletionTracker.drop(entry.paneKey)
+      return
+    }
+    this.codexTranscriptCompletionTracker.arm({
+      paneKey: entry.paneKey,
+      sessionId: providerSession.id,
+      transcriptPath,
+      turnId,
+      // Why: persisted prompt interaction ids are intentionally omitted; receivedAt is the tightest safe restart boundary.
+      startedAt: turnId ? entry.stateStartedAt : entry.receivedAt,
+      onCompleted: (paneKey) => {
+        const owner = parsePaneKey(paneKey)
+        this.inferCodexTranscriptCompletion({
+          ...entry,
+          paneKey,
+          tabId: owner?.tabId
+        })
+      }
+    })
+  }
+
+  private buildCodexTranscriptStopBody(
+    entry: EnrichedAgentHookEventPayload
+  ): Record<string, unknown> | null {
+    const providerSession = entry.providerSession
+    const transcriptPath = providerSession?.transcriptPath
+    if (!providerSession || !transcriptPath) {
+      return null
+    }
+    return {
+      paneKey: entry.paneKey,
+      launchToken: entry.launchToken,
+      tabId: entry.tabId,
+      worktreeId: entry.worktreeId,
+      env: this.env,
+      payload: {
+        hook_event_name: 'Stop',
+        session_id: providerSession.id,
+        transcript_path: transcriptPath,
+        ...(entry.promptInteractionKey ? { turn_id: entry.promptInteractionKey } : {})
+      }
+    }
+  }
+
+  private inferCodexTranscriptCompletion(baseline: EnrichedAgentHookEventPayload): void {
+    const current = this.state.lastStatusByPaneKey.get(baseline.paneKey) as
+      | EnrichedAgentHookEventPayload
+      | undefined
+    if (
+      !current ||
+      current.payload.agentType !== 'codex' ||
+      (current.payload.state !== 'working' && current.payload.state !== 'waiting') ||
+      (baseline.promptInteractionKey !== undefined &&
+        current.toolAgentId === undefined &&
+        current.promptInteractionKey !== baseline.promptInteractionKey) ||
+      (baseline.promptInteractionKey === undefined &&
+        current.toolAgentId === undefined &&
+        current.stateStartedAt !== baseline.stateStartedAt) ||
+      current.providerSession?.id !== baseline.providerSession?.id ||
+      current.providerSession?.transcriptPath !== baseline.providerSession?.transcriptPath
+    ) {
+      return
+    }
+    const stopBody = this.buildCodexTranscriptStopBody(baseline)
+    if (!stopBody) {
+      return
+    }
+    // Why: run transcript proof through the same root Stop normalizer that owns child aggregation.
+    const normalized = normalizeHookPayload(this.state, 'codex', stopBody, this.env)
+    if (!normalized) {
+      return
+    }
+    const enriched = this.applyNormalizedStatus({
+      ...normalized,
+      hookEventName: 'TranscriptTaskComplete',
+      providerSession: current.providerSession,
+      // Why: hydration has no prompt/tool caches; completion only owns lead/child state, not visible turn context.
+      payload: {
+        ...current.payload,
+        state: normalized.payload.state,
+        subagents: normalized.payload.subagents
+      }
+    })
+    // Why: a child may outlive the root turn and omit its Stop hook; keep rescanning from the root transcript body.
+    this.scheduleCodexSubagentPoll('codex', stopBody, enriched)
+  }
+
   private clearAssistantMessageRetry(paneKey: string): void {
     const timer = this.assistantMessageRetryTimers.get(paneKey)
     if (!timer) {
@@ -1045,40 +1169,62 @@ export class AgentHookServer {
 
   private clearCodexSubagentPoll(paneKey: string): void {
     const timer = this.codexSubagentPollTimers.get(paneKey)
-    if (!timer) {
-      return
+    if (timer) {
+      clearTimeout(timer)
+      this.codexSubagentPollTimers.delete(paneKey)
     }
-    clearTimeout(timer)
-    this.codexSubagentPollTimers.delete(paneKey)
+    this.codexSubagentPollBodyByPaneKey.delete(paneKey)
+  }
+
+  private retargetHookBody(body: unknown, target: EnrichedAgentHookEventPayload): unknown {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return body
+    }
+    return {
+      ...(body as Record<string, unknown>),
+      paneKey: target.paneKey,
+      tabId: target.tabId,
+      worktreeId: target.worktreeId
+    }
   }
 
   private scheduleCodexSubagentPoll(
     source: AgentHookSource,
     body: unknown,
-    original: EnrichedAgentHookEventPayload
+    original: EnrichedAgentHookEventPayload,
+    options: { rootBody?: unknown } = {}
   ): void {
     // Why: a nested non-codex CLI inherits ORCA_PANE_KEY, so clearing here would silently end a live codex poll.
     if (source !== 'codex') {
       return
     }
-    this.clearCodexSubagentPoll(original.paneKey)
-    if (!hasCodexTranscriptSubagents(this.state, original.paneKey)) {
+    const previousRootBody = this.codexSubagentPollBodyByPaneKey.get(original.paneKey)
+    const pollBody = options.rootBody ?? (original.toolAgentId ? previousRootBody : body)
+    const previousTimer = this.codexSubagentPollTimers.get(original.paneKey)
+    if (previousTimer) {
+      clearTimeout(previousTimer)
+      this.codexSubagentPollTimers.delete(original.paneKey)
+    }
+    if (!pollBody || !hasCodexTranscriptSubagents(this.state, original.paneKey)) {
+      this.codexSubagentPollBodyByPaneKey.delete(original.paneKey)
       return
     }
+    this.codexSubagentPollBodyByPaneKey.set(original.paneKey, pollBody)
     const timer = setTimeout(() => {
       this.codexSubagentPollTimers.delete(original.paneKey)
       const current = this.state.lastStatusByPaneKey.get(original.paneKey)
       if (!this.server || current !== original) {
+        this.codexSubagentPollBodyByPaneKey.delete(original.paneKey)
         return
       }
-      const normalized = normalizeHookPayload(this.state, source, body, this.env)
+      const normalized = normalizeHookPayload(this.state, source, pollBody, this.env)
       if (!normalized) {
         return
       }
       const subagentsChanged =
         JSON.stringify(normalized.payload.subagents) !== JSON.stringify(original.payload.subagents)
       const next = subagentsChanged ? this.applyNormalizedStatus(normalized) : original
-      this.scheduleCodexSubagentPoll(source, body, next)
+      this.scheduleCodexSubagentPoll(source, pollBody, next)
     }, CODEX_SUBAGENT_POLL_MS)
     this.codexSubagentPollTimers.set(original.paneKey, timer)
     if (typeof timer.unref === 'function') {
@@ -1289,17 +1435,22 @@ export class AgentHookServer {
     const existing = this.legacyPaneKeyAliases.get(physicalPaneKey)
     const normalizedPtyId = ptyId?.trim() || existing?.ptyId || null
     const hadStatus = this.state.lastStatusByPaneKey.has(previousOwnerPaneKey)
+    const codexSubagentPollBody = this.codexSubagentPollBodyByPaneKey.get(previousOwnerPaneKey)
+    this.codexTranscriptCompletionTracker.transfer(previousOwnerPaneKey, toPaneKey)
     movePaneCacheState(this.state, previousOwnerPaneKey, toPaneKey)
     const movedStatus = this.state.lastStatusByPaneKey.get(toPaneKey) as
       | EnrichedAgentHookEventPayload
       | undefined
+    let movedEntry: EnrichedAgentHookEventPayload | undefined
     if (movedStatus) {
       const owner = parsePaneKey(toPaneKey)
-      this.state.lastStatusByPaneKey.set(toPaneKey, {
+      movedEntry = {
         ...movedStatus,
         paneKey: toPaneKey,
         tabId: owner?.tabId
-      })
+      }
+      this.state.lastStatusByPaneKey.set(toPaneKey, movedEntry)
+      this.syncCodexTranscriptCompletion(movedEntry)
     }
     if (this.runtimeObservedStatusPaneKeys.delete(previousOwnerPaneKey)) {
       this.runtimeObservedStatusPaneKeys.add(toPaneKey)
@@ -1311,6 +1462,13 @@ export class AgentHookServer {
     }
     this.clearAssistantMessageRetry(previousOwnerPaneKey)
     this.clearCodexSubagentPoll(previousOwnerPaneKey)
+    if (movedEntry && codexSubagentPollBody) {
+      // Why: a transcript-complete lead can still own live children; detach must keep their polling bound to the new pane owner.
+      const movedPollBody = this.retargetHookBody(codexSubagentPollBody, movedEntry)
+      this.scheduleCodexSubagentPoll('codex', movedPollBody, movedEntry, {
+        rootBody: movedPollBody
+      })
+    }
     // Why: the live process keeps posting the physical source key after detach; persist a chain-safe mapping to the current owner.
     this.legacyPaneKeyAliases.set(physicalPaneKey, {
       stablePaneKey: toPaneKey,
@@ -1344,6 +1502,7 @@ export class AgentHookServer {
       this.markPaneClosedForAgentStatus(key)
       this.clearAssistantMessageRetry(key)
       this.clearCodexSubagentPoll(key)
+      this.codexTranscriptCompletionTracker.drop(key)
       clearPaneCacheState(this.state, key)
       this.runtimeObservedStatusPaneKeys.delete(key)
       this.promptSentDedupeByPaneKey.delete(key)
@@ -1367,6 +1526,7 @@ export class AgentHookServer {
     for (const [legacyPaneKey, entry] of this.legacyPaneKeyAliases) {
       if (entry.ptyId === ptyId) {
         this.legacyPaneKeyAliases.delete(legacyPaneKey)
+        this.codexTranscriptCompletionTracker.drop(legacyPaneKey)
         clearPaneCacheState(this.state, legacyPaneKey)
         this.promptSentDedupeByPaneKey.delete(legacyPaneKey)
         const shouldClearStablePaneKey =
@@ -1377,6 +1537,7 @@ export class AgentHookServer {
         }
         if (shouldClearStablePaneKey) {
           // Why: hydrated rows live under the stable key; if this PTY dies before ptyPaneKey rebuilds, alias cleanup is the only evictor.
+          this.codexTranscriptCompletionTracker.drop(entry.stablePaneKey)
           clearPaneCacheState(this.state, entry.stablePaneKey)
           this.runtimeObservedStatusPaneKeys.delete(entry.stablePaneKey)
           this.promptSentDedupeByPaneKey.delete(entry.stablePaneKey)
@@ -1732,6 +1893,8 @@ export class AgentHookServer {
       clearTimeout(timer)
     }
     this.codexSubagentPollTimers.clear()
+    this.codexSubagentPollBodyByPaneKey.clear()
+    this.codexTranscriptCompletionTracker.clear()
     // Why: don't unlink the endpoint file — a stale file matches fail-open and avoids a TOCTOU race with a concurrent Orca.
     this.endpointDir = null
     this.endpointFilePathCache = null
@@ -1800,6 +1963,7 @@ export class AgentHookServer {
 
   private deleteStatusEntry(paneKey: string): EnrichedAgentHookEventPayload | null {
     const resolvedPaneKey = this.resolvePaneKeyAlias(paneKey)
+    this.codexTranscriptCompletionTracker.drop(resolvedPaneKey)
     const existing = this.state.lastStatusByPaneKey.get(resolvedPaneKey) as
       | EnrichedAgentHookEventPayload
       | undefined
@@ -1875,6 +2039,7 @@ export class AgentHookServer {
       }
       this.clearAssistantMessageRetry(paneKey)
       this.clearCodexSubagentPoll(paneKey)
+      this.codexTranscriptCompletionTracker.drop(paneKey)
       clearPaneCacheState(this.state, paneKey)
       this.runtimeObservedStatusPaneKeys.delete(paneKey)
       this.promptSentDedupeByPaneKey.delete(paneKey)
@@ -1894,12 +2059,14 @@ export class AgentHookServer {
     const hadStatus = this.state.lastStatusByPaneKey.has(resolvedPaneKey)
     this.clearAssistantMessageRetry(resolvedPaneKey)
     this.clearCodexSubagentPoll(resolvedPaneKey)
+    this.codexTranscriptCompletionTracker.drop(resolvedPaneKey)
     clearPaneCacheState(this.state, resolvedPaneKey)
     this.promptSentDedupeByPaneKey.delete(resolvedPaneKey)
     let clearedAlias = false
     for (const [legacyPaneKey, stablePaneKey] of this.legacyPaneKeyAliases) {
       if (stablePaneKey.stablePaneKey === resolvedPaneKey) {
         this.legacyPaneKeyAliases.delete(legacyPaneKey)
+        this.codexTranscriptCompletionTracker.drop(legacyPaneKey)
         clearPaneCacheState(this.state, legacyPaneKey)
         this.promptSentDedupeByPaneKey.delete(legacyPaneKey)
         clearedAlias = true
@@ -2001,6 +2168,7 @@ export class AgentHookServer {
     let hydrated = 0
     let dropped = 0
     let prunedLegacyClaudeSubagents = 0
+    let reconciledCodexTranscriptCompletions = 0
     // Why: drop entries older than HYDRATE_MAX_AGE_MS to bound disk growth (one Date.now() for a consistent cutoff).
     const ttlCutoff = Date.now() - HYDRATE_MAX_AGE_MS
     for (const [paneKey, rawEntry] of Object.entries(entries)) {
@@ -2029,6 +2197,30 @@ export class AgentHookServer {
         // Why: restore live child hierarchy immediately; provider-specific reconciliation reaps stale seeds.
         if (entry.payload.agentType === 'codex') {
           seedCodexStateFromSnapshot(this.state, resolvedPaneKey, entry.payload)
+          const resumesCompletedLead =
+            entry.codexLeadCompleted === true ||
+            (entry.toolAgentId === undefined &&
+              (entry.hookEventName === 'Stop' || entry.hookEventName === 'TranscriptTaskComplete'))
+          if (resumesCompletedLead) {
+            const stopBody = this.buildCodexTranscriptStopBody(entry)
+            const normalized = stopBody
+              ? normalizeHookPayload(this.state, 'codex', stopBody, this.env)
+              : null
+            if (normalized) {
+              const previousPayload = JSON.stringify(entry.payload)
+              entry.payload = {
+                ...entry.payload,
+                state: normalized.payload.state,
+                subagents: normalized.payload.subagents
+              }
+              if (JSON.stringify(entry.payload) !== previousPayload) {
+                reconciledCodexTranscriptCompletions += 1
+              }
+              this.scheduleCodexSubagentPoll('codex', stopBody, entry)
+            }
+          } else {
+            this.syncCodexTranscriptCompletion(entry, { resumeHydrated: true })
+          }
         } else if (entry.payload.agentType === 'claude' && entry.payload.subagents) {
           seedClaudeSubagentRosterFromSnapshots(
             this.state,
@@ -2046,7 +2238,11 @@ export class AgentHookServer {
         `[agent-hooks] last-status hydrate dropped ${dropped} entries (kept ${hydrated})`
       )
     }
-    if (dropped > 0 || prunedLegacyClaudeSubagents > 0) {
+    if (
+      dropped > 0 ||
+      prunedLegacyClaudeSubagents > 0 ||
+      reconciledCodexTranscriptCompletions > 0
+    ) {
       // Why: persist load-time pruning once so legacy idle rows aren't re-parsed every launch.
       this.runStatusPersist()
     } else if (hydrated > 0) {
@@ -2144,6 +2340,10 @@ export class AgentHookServer {
 
   _resetConnectionTimestampWatermarksForTests(): void {
     this.connectionTimestampWatermarkById.clear()
+  }
+
+  _getCodexTranscriptWatcherCountForTests(): number {
+    return this.codexTranscriptCompletionTracker.size
   }
 }
 

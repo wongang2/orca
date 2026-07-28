@@ -2913,6 +2913,26 @@ describe('shared agent-hook-listener', () => {
     expect(stop?.payload.state).toBe('done')
   })
 
+  it('preserves Codex turn_id as the prompt interaction key', () => {
+    const working = normalizeHookPayload(
+      state,
+      'codex',
+      {
+        paneKey: PANE_KEY,
+        payload: {
+          hook_event_name: 'UserPromptSubmit',
+          turn_id: 'turn-codex-1',
+          session_id: 'session-codex-1',
+          transcript_path: '/tmp/rollout-codex-1.jsonl',
+          prompt: 'fix the stale status'
+        }
+      },
+      'production'
+    )
+
+    expect(working?.promptInteractionKey).toBe('turn-codex-1')
+  })
+
   it('keeps ordinary Codex PreToolUse mapped to working', () => {
     const working = normalizeHookPayload(
       state,

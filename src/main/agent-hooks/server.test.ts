@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -3031,6 +3032,716 @@ describe('AgentHookServer listener replay', () => {
       )
     } finally {
       server.stop()
+    }
+  })
+
+  it('settles a local Codex working row from the matching transcript task_complete', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'orca-codex-transcript-completion-'))
+    const transcriptPath = join(tmpDir, 'rollout.jsonl')
+    writeFileSync(
+      transcriptPath,
+      `${JSON.stringify({
+        timestamp: '2026-07-28T10:00:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-1' }
+      })}\n`
+    )
+    const server = new AgentHookServer()
+    await server.start({ env: 'production' })
+    try {
+      const env = server.buildPtyEnv()
+      const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+        },
+        body: JSON.stringify(
+          buildBody({
+            hook_event_name: 'UserPromptSubmit',
+            turn_id: 'turn-1',
+            session_id: 'session-1',
+            transcript_path: transcriptPath,
+            prompt: 'finish this turn'
+          })
+        )
+      })
+      expect(response.status).toBe(204)
+      expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'working' })
+
+      const waitingResponse = await fetch(
+        `http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+          },
+          body: JSON.stringify(
+            buildBody({
+              hook_event_name: 'PermissionRequest',
+              turn_id: 'turn-1',
+              session_id: 'session-1',
+              transcript_path: transcriptPath,
+              tool_name: 'exec_command',
+              tool_input: { cmd: 'git status' }
+            })
+          )
+        }
+      )
+      expect(waitingResponse.status).toBe(204)
+      expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'waiting' })
+
+      appendFileSync(
+        transcriptPath,
+        `${JSON.stringify({
+          timestamp: '2026-07-28T10:00:01.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: 'turn-1' }
+        })}\n`
+      )
+
+      await vi.waitFor(() => {
+        expect(server.getStatusSnapshot()[0]).toMatchObject({
+          state: 'done',
+          prompt: 'finish this turn',
+          agentType: 'codex',
+          providerSession: {
+            key: 'session_id',
+            id: 'session-1',
+            transcriptPath
+          }
+        })
+      })
+    } finally {
+      server.stop()
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the root completion watcher and active child status across Codex child hooks', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'orca-codex-transcript-child-'))
+    const transcriptPath = join(tmpDir, 'rollout.jsonl')
+    const childId = '019fa65f-3144-7151-9c02-cff7a28f316f'
+    const childTranscriptPath = join(tmpDir, `rollout-child-${childId}.jsonl`)
+    writeFileSync(
+      transcriptPath,
+      `${JSON.stringify({
+        timestamp: '2026-07-28T10:00:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-root' }
+      })}\n${JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'sub_agent_activity',
+          occurred_at_ms: 1_753_700_400_000,
+          agent_thread_id: childId,
+          agent_path: '/root/child',
+          kind: 'started'
+        }
+      })}\n`
+    )
+    writeFileSync(
+      childTranscriptPath,
+      `${JSON.stringify({
+        timestamp: '2026-07-28T10:00:00.100Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-child' }
+      })}\n`
+    )
+    const server = new AgentHookServer()
+    await server.start({ env: 'production' })
+    try {
+      const env = server.buildPtyEnv()
+      const postCodexHook = async (payload: Record<string, unknown>): Promise<void> => {
+        const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+          },
+          body: JSON.stringify(buildBody(payload))
+        })
+        expect(response.status).toBe(204)
+      }
+
+      await postCodexHook({
+        hook_event_name: 'UserPromptSubmit',
+        turn_id: 'turn-root',
+        session_id: 'session-child',
+        transcript_path: transcriptPath,
+        prompt: 'coordinate a child'
+      })
+      await postCodexHook({
+        hook_event_name: 'UserPromptSubmit',
+        turn_id: 'turn-child',
+        agent_id: childId,
+        agent_type: 'explorer',
+        session_id: 'session-child',
+        transcript_path: childTranscriptPath
+      })
+
+      expect(server._getCodexTranscriptWatcherCountForTests()).toBe(1)
+      expect(server.getStatusSnapshot()[0]).toMatchObject({
+        state: 'working',
+        subagents: [expect.objectContaining({ id: childId, state: 'working' })]
+      })
+
+      appendFileSync(
+        transcriptPath,
+        `${JSON.stringify({
+          timestamp: '2026-07-28T10:00:01.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: 'turn-root' }
+        })}\n`
+      )
+      await vi.waitFor(() => {
+        expect(server._getCodexTranscriptWatcherCountForTests()).toBe(0)
+      })
+      expect(server.getStatusSnapshot()[0]).toMatchObject({
+        state: 'working',
+        subagents: [expect.objectContaining({ id: childId, state: 'working' })]
+      })
+
+      await postCodexHook({
+        hook_event_name: 'PostToolUse',
+        turn_id: 'turn-child',
+        agent_id: childId,
+        agent_type: 'explorer',
+        session_id: 'session-child',
+        transcript_path: childTranscriptPath,
+        tool_name: 'exec_command'
+      })
+      appendFileSync(
+        childTranscriptPath,
+        `${JSON.stringify({
+          timestamp: '2026-07-28T10:00:02.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: 'turn-child' }
+        })}\n`
+      )
+      await vi.waitFor(
+        () => {
+          expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'done' })
+        },
+        { timeout: 3_000, interval: 50 }
+      )
+      expect(server.getStatusSnapshot()[0]?.subagents).toBeUndefined()
+    } finally {
+      server.stop()
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the Codex root completion watcher when pane authority moves after tool progress', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'orca-codex-transcript-pane-transfer-'))
+    const transcriptPath = join(tmpDir, 'rollout.jsonl')
+    writeFileSync(
+      transcriptPath,
+      `${JSON.stringify({
+        timestamp: '2026-07-28T10:00:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-transfer' }
+      })}\n`
+    )
+    const server = new AgentHookServer()
+    await server.start({ env: 'production' })
+    try {
+      const env = server.buildPtyEnv()
+      const postCodexHook = async (payload: Record<string, unknown>): Promise<void> => {
+        const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+          },
+          body: JSON.stringify(buildBody(payload))
+        })
+        expect(response.status).toBe(204)
+      }
+
+      await postCodexHook({
+        hook_event_name: 'UserPromptSubmit',
+        turn_id: 'turn-transfer',
+        session_id: 'session-transfer',
+        transcript_path: transcriptPath,
+        prompt: 'survive pane transfer'
+      })
+      await postCodexHook({
+        hook_event_name: 'PostToolUse',
+        turn_id: 'turn-transfer',
+        session_id: 'session-transfer',
+        transcript_path: transcriptPath,
+        tool_name: 'exec_command'
+      })
+      expect(server._getCodexTranscriptWatcherCountForTests()).toBe(1)
+
+      server.transferPaneAuthority(PANE, GOOD_PANE, 'pty-transfer')
+      expect(server.getStatusSnapshot()).toEqual([
+        expect.objectContaining({
+          paneKey: GOOD_PANE,
+          tabId: 'tab-good',
+          state: 'working',
+          prompt: 'survive pane transfer'
+        })
+      ])
+
+      appendFileSync(
+        transcriptPath,
+        `${JSON.stringify({
+          timestamp: '2026-07-28T10:00:01.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: 'turn-transfer' }
+        })}\n`
+      )
+      await vi.waitFor(() => {
+        expect(server.getStatusSnapshot()).toEqual([
+          expect.objectContaining({
+            paneKey: GOOD_PANE,
+            tabId: 'tab-good',
+            state: 'done',
+            prompt: 'survive pane transfer'
+          })
+        ])
+      })
+      expect(server._getCodexTranscriptWatcherCountForTests()).toBe(0)
+    } finally {
+      server.stop()
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps Codex child transcript polling when pane authority moves after root completion', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'orca-codex-child-pane-transfer-'))
+    const transcriptPath = join(tmpDir, 'rollout.jsonl')
+    const childId = '019fa65f-3144-7151-9c02-cff7a28f3171'
+    const childTranscriptPath = join(tmpDir, `rollout-child-${childId}.jsonl`)
+    writeFileSync(
+      transcriptPath,
+      `${JSON.stringify({
+        timestamp: '2026-07-28T10:00:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-root-transfer' }
+      })}\n${JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'sub_agent_activity',
+          occurred_at_ms: 1_753_700_400_000,
+          agent_thread_id: childId,
+          agent_path: '/root/transfer-child',
+          kind: 'started'
+        }
+      })}\n`
+    )
+    writeFileSync(
+      childTranscriptPath,
+      `${JSON.stringify({
+        timestamp: '2026-07-28T10:00:00.100Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-child-transfer' }
+      })}\n`
+    )
+    const server = new AgentHookServer()
+    await server.start({ env: 'production' })
+    try {
+      const env = server.buildPtyEnv()
+      const postCodexHook = async (payload: Record<string, unknown>): Promise<void> => {
+        const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+          },
+          body: JSON.stringify(buildBody(payload))
+        })
+        expect(response.status).toBe(204)
+      }
+
+      await postCodexHook({
+        hook_event_name: 'UserPromptSubmit',
+        turn_id: 'turn-root-transfer',
+        session_id: 'session-child-transfer',
+        transcript_path: transcriptPath,
+        prompt: 'finish child after transfer'
+      })
+      await postCodexHook({
+        hook_event_name: 'UserPromptSubmit',
+        turn_id: 'turn-child-transfer',
+        agent_id: childId,
+        agent_type: 'explorer',
+        session_id: 'session-child-transfer',
+        transcript_path: childTranscriptPath
+      })
+      appendFileSync(
+        transcriptPath,
+        `${JSON.stringify({
+          timestamp: '2026-07-28T10:00:01.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: 'turn-root-transfer' }
+        })}\n`
+      )
+      await vi.waitFor(() => {
+        expect(server._getCodexTranscriptWatcherCountForTests()).toBe(0)
+      })
+      await postCodexHook({
+        hook_event_name: 'PostToolUse',
+        turn_id: 'turn-child-transfer',
+        agent_id: childId,
+        agent_type: 'explorer',
+        session_id: 'session-child-transfer',
+        transcript_path: childTranscriptPath,
+        tool_name: 'exec_command'
+      })
+
+      server.transferPaneAuthority(PANE, GOOD_PANE, 'pty-child-transfer')
+      expect(server.getStatusSnapshot()).toEqual([
+        expect.objectContaining({
+          paneKey: GOOD_PANE,
+          tabId: 'tab-good',
+          state: 'working',
+          subagents: [expect.objectContaining({ id: childId, state: 'working' })]
+        })
+      ])
+
+      appendFileSync(
+        childTranscriptPath,
+        `${JSON.stringify({
+          timestamp: '2026-07-28T10:00:02.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: 'turn-child-transfer' }
+        })}\n`
+      )
+      await vi.waitFor(
+        () => {
+          expect(server.getStatusSnapshot()).toEqual([
+            expect.objectContaining({
+              paneKey: GOOD_PANE,
+              tabId: 'tab-good',
+              state: 'done',
+              prompt: 'finish child after transfer'
+            })
+          ])
+        },
+        { timeout: 3_000, interval: 50 }
+      )
+      expect(server.getStatusSnapshot()[0]?.subagents).toBeUndefined()
+    } finally {
+      server.stop()
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('finishes a persisted transcript-complete Codex lead after its child exits during restart', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'orca-codex-transcript-child-restart-'))
+    const transcriptPath = join(tmpDir, 'rollout.jsonl')
+    const childId = '019fa65f-3144-7151-9c02-cff7a28f3170'
+    const childTranscriptPath = join(tmpDir, `rollout-child-${childId}.jsonl`)
+    writeFileSync(
+      transcriptPath,
+      `${JSON.stringify({
+        timestamp: '2026-07-28T10:00:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-root-restart' }
+      })}\n${JSON.stringify({
+        type: 'event_msg',
+        payload: {
+          type: 'sub_agent_activity',
+          occurred_at_ms: 1_753_700_400_000,
+          agent_thread_id: childId,
+          agent_path: '/root/restart-child',
+          kind: 'started'
+        }
+      })}\n`
+    )
+    writeFileSync(
+      childTranscriptPath,
+      `${JSON.stringify({
+        timestamp: '2026-07-28T10:00:00.100Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-child-restart' }
+      })}\n`
+    )
+
+    const firstServer = new AgentHookServer()
+    await firstServer.start({ env: 'production', userDataPath: tmpDir })
+    try {
+      const env = firstServer.buildPtyEnv()
+      const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+        },
+        body: JSON.stringify(
+          buildBody({
+            hook_event_name: 'UserPromptSubmit',
+            turn_id: 'turn-root-restart',
+            session_id: 'session-child-restart',
+            transcript_path: transcriptPath,
+            prompt: 'finish after restart'
+          })
+        )
+      })
+      expect(response.status).toBe(204)
+
+      appendFileSync(
+        transcriptPath,
+        `${JSON.stringify({
+          timestamp: '2026-07-28T10:00:01.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: 'turn-root-restart' }
+        })}\n`
+      )
+      await vi.waitFor(() => {
+        expect(firstServer._getCodexTranscriptWatcherCountForTests()).toBe(0)
+      })
+      expect(firstServer.getStatusSnapshot()[0]).toMatchObject({
+        state: 'working',
+        subagents: [expect.objectContaining({ id: childId })]
+      })
+      const childResponse = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+        },
+        body: JSON.stringify(
+          buildBody({
+            hook_event_name: 'PostToolUse',
+            turn_id: 'turn-child-restart',
+            agent_id: childId,
+            agent_type: 'explorer',
+            session_id: 'session-child-restart',
+            transcript_path: childTranscriptPath,
+            tool_name: 'exec_command'
+          })
+        )
+      })
+      expect(childResponse.status).toBe(204)
+      firstServer.flushStatusPersistSync()
+      const persisted = JSON.parse(
+        readFileSync(join(tmpDir, 'agent-hooks', 'last-status.json'), 'utf8')
+      )
+      expect(persisted.entries[PANE].codexLeadCompleted).toBe(true)
+    } finally {
+      firstServer.stop()
+    }
+
+    appendFileSync(
+      childTranscriptPath,
+      `${JSON.stringify({
+        timestamp: '2026-07-28T10:00:02.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_complete', turn_id: 'turn-child-restart' }
+      })}\n`
+    )
+
+    const hydratedServer = new AgentHookServer()
+    await hydratedServer.start({ env: 'production', userDataPath: tmpDir })
+    try {
+      expect(hydratedServer.getStatusSnapshot()[0]).toMatchObject({
+        state: 'done',
+        prompt: 'finish after restart'
+      })
+      expect(hydratedServer.getStatusSnapshot()[0]?.subagents).toBeUndefined()
+    } finally {
+      hydratedServer.stop()
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('arms Codex completion recovery before the transcript file exists', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'orca-codex-transcript-late-file-'))
+    const transcriptPath = join(tmpDir, 'rollout.jsonl')
+    const server = new AgentHookServer()
+    await server.start({ env: 'production' })
+    try {
+      const env = server.buildPtyEnv()
+      const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+        },
+        body: JSON.stringify(
+          buildBody({
+            hook_event_name: 'UserPromptSubmit',
+            turn_id: 'turn-late-file',
+            session_id: 'session-late-file',
+            transcript_path: transcriptPath,
+            prompt: 'wait for transcript creation'
+          })
+        )
+      })
+      expect(response.status).toBe(204)
+      expect(server._getCodexTranscriptWatcherCountForTests()).toBe(1)
+
+      writeFileSync(
+        transcriptPath,
+        `${JSON.stringify({
+          timestamp: '2026-07-28T10:00:00.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_started', turn_id: 'turn-late-file' }
+        })}\n${JSON.stringify({
+          timestamp: '2026-07-28T10:00:01.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: 'turn-late-file' }
+        })}\n`
+      )
+
+      await vi.waitFor(
+        () => {
+          expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'done' })
+        },
+        { timeout: 2_000 }
+      )
+    } finally {
+      server.stop()
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps Codex working for another turn completion and cancels the fallback on Stop', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'orca-codex-transcript-turn-guard-'))
+    const transcriptPath = join(tmpDir, 'rollout.jsonl')
+    writeFileSync(
+      transcriptPath,
+      `${JSON.stringify({
+        timestamp: '2026-07-28T10:00:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-current' }
+      })}\n`
+    )
+    const server = new AgentHookServer()
+    await server.start({ env: 'production' })
+    try {
+      const env = server.buildPtyEnv()
+      const listener = vi.fn()
+      server.setListener(listener)
+      const postCodexHook = async (payload: Record<string, unknown>): Promise<void> => {
+        const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+          },
+          body: JSON.stringify(buildBody(payload))
+        })
+        expect(response.status).toBe(204)
+      }
+
+      await postCodexHook({
+        hook_event_name: 'UserPromptSubmit',
+        turn_id: 'turn-current',
+        session_id: 'session-guard',
+        transcript_path: transcriptPath,
+        prompt: 'still running'
+      })
+      expect(server._getCodexTranscriptWatcherCountForTests()).toBe(1)
+
+      appendFileSync(
+        transcriptPath,
+        `${JSON.stringify({
+          timestamp: '2026-07-28T10:00:01.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: 'turn-old' }
+        })}\n`
+      )
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(server.getStatusSnapshot()[0]).toMatchObject({ state: 'working' })
+      expect(server._getCodexTranscriptWatcherCountForTests()).toBe(1)
+
+      await postCodexHook({
+        hook_event_name: 'Stop',
+        turn_id: 'turn-current',
+        session_id: 'session-guard',
+        transcript_path: transcriptPath,
+        last_assistant_message: 'finished normally'
+      })
+      expect(server.getStatusSnapshot()[0]).toMatchObject({
+        state: 'done',
+        lastAssistantMessage: 'finished normally'
+      })
+      expect(server._getCodexTranscriptWatcherCountForTests()).toBe(0)
+      expect(listener).toHaveBeenCalledTimes(2)
+
+      appendFileSync(
+        transcriptPath,
+        `${JSON.stringify({
+          timestamp: '2026-07-28T10:00:02.000Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: 'turn-current' }
+        })}\n`
+      )
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(listener).toHaveBeenCalledTimes(2)
+    } finally {
+      server.stop()
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('repairs a persisted Codex working row from a completed transcript after restart', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'orca-codex-transcript-restart-'))
+    const transcriptPath = join(tmpDir, 'rollout.jsonl')
+    const startedAt = Date.now() - 1_000
+    writeFileSync(
+      transcriptPath,
+      `${JSON.stringify({
+        timestamp: new Date(startedAt).toISOString(),
+        type: 'event_msg',
+        payload: { type: 'task_started', turn_id: 'turn-restart' }
+      })}\n`
+    )
+    const firstServer = new AgentHookServer()
+    await firstServer.start({ env: 'production', userDataPath: tmpDir })
+    try {
+      const env = firstServer.buildPtyEnv()
+      const response = await fetch(`http://127.0.0.1:${env.ORCA_AGENT_HOOK_PORT}/hook/codex`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Orca-Agent-Hook-Token': env.ORCA_AGENT_HOOK_TOKEN
+        },
+        body: JSON.stringify(
+          buildBody({
+            hook_event_name: 'UserPromptSubmit',
+            turn_id: 'turn-restart',
+            session_id: 'session-restart',
+            transcript_path: transcriptPath,
+            prompt: 'survive restart'
+          })
+        )
+      })
+      expect(response.status).toBe(204)
+      firstServer.flushStatusPersistSync()
+    } finally {
+      firstServer.stop()
+    }
+
+    appendFileSync(
+      transcriptPath,
+      `${JSON.stringify({
+        timestamp: new Date(Date.now() + 1_000).toISOString(),
+        type: 'event_msg',
+        payload: { type: 'task_complete', turn_id: 'turn-restart' }
+      })}\n`
+    )
+
+    const hydratedServer = new AgentHookServer()
+    await hydratedServer.start({ env: 'production', userDataPath: tmpDir })
+    try {
+      await vi.waitFor(() => {
+        expect(hydratedServer.getStatusSnapshot()[0]).toMatchObject({
+          state: 'done',
+          prompt: 'survive restart',
+          agentType: 'codex'
+        })
+      })
+      expect(hydratedServer._getCodexTranscriptWatcherCountForTests()).toBe(0)
+    } finally {
+      hydratedServer.stop()
+      rmSync(tmpDir, { recursive: true, force: true })
     }
   })
 
