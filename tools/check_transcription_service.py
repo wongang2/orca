@@ -228,14 +228,13 @@ def _has_code_wiring(text: str, suffix: str) -> bool:
             return False
         imported_callables: dict[str, int] = {}
         imported_modules: dict[str, int] = {}
-        local_callables: dict[str, int] = {}
         marker = re.compile(r"(?:quality|provenance|delivery)", re.I)
         action = re.compile(
             r"(?:build|new|create|make|validate|attach|persist|save|record|"
             r"emit|apply|enforce|prepare|deliver)",
             re.I,
         )
-        for node in ast.walk(tree):
+        for node in tree.body:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if marker.search(alias.name):
@@ -243,44 +242,56 @@ def _has_code_wiring(text: str, suffix: str) -> bool:
                             alias.asname or alias.name.split(".", 1)[0]
                         ] = node.lineno
             elif isinstance(node, ast.ImportFrom):
-                module_matches = marker.search(node.module or "") is not None
                 for alias in node.names:
-                    if module_matches or marker.search(alias.name):
+                    if marker.search(alias.name):
                         imported_callables[alias.asname or alias.name] = node.lineno
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if marker.search(node.name) and action.search(node.name):
-                    local_callables[node.name] = node.lineno
+        parents: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parents[child] = parent
+
+        def is_reachable(node: ast.AST) -> bool:
+            parent = parents.get(node)
+            while parent is not None:
+                if isinstance(parent, (ast.If, ast.While)):
+                    test = parent.test
+                    if isinstance(test, ast.Constant) and not bool(test.value):
+                        return False
+                parent = parents.get(parent)
+            return True
+
+        def call_has_provenance_fields(node: ast.Call) -> bool:
+            fields = {keyword.arg for keyword in node.keywords if keyword.arg}
+            return {
+                "audio_sha256",
+                "engine_id",
+                "quality_status",
+                "delivery_status",
+            } <= fields
+
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+            if not isinstance(node, ast.Call) or not is_reachable(node):
                 continue
-            if (
-                isinstance(node.func, ast.Name)
-                and min(
-                    imported_callables.get(node.func.id, node.lineno),
-                    local_callables.get(node.func.id, node.lineno),
-                )
-                < node.lineno
-            ):
-                return True
+            if isinstance(node.func, ast.Name):
+                imported_at = imported_callables.get(node.func.id)
+                if imported_at is not None and imported_at < node.lineno:
+                    if action.search(node.func.id) or call_has_provenance_fields(node):
+                        return True
             if (
                 isinstance(node.func, ast.Attribute)
-                and (
-                    (
-                        isinstance(node.func.value, ast.Name)
-                        and imported_modules.get(
-                            node.func.value.id, node.lineno
-                        )
-                        < node.lineno
-                        and marker.search(node.func.attr)
-                    )
-                    or node.func.attr in {"provenance_fields", "runtime_provenance"}
-                    or (
-                        marker.search(node.func.attr)
-                        and action.search(node.func.attr)
-                    )
-                )
+                and isinstance(node.func.value, ast.Name)
             ):
-                return True
+                imported_at = imported_modules.get(node.func.value.id)
+                if (
+                    imported_at is not None
+                    and imported_at < node.lineno
+                    and marker.search(node.func.attr)
+                    and (
+                        action.search(node.func.attr)
+                        or call_has_provenance_fields(node)
+                    )
+                ):
+                    return True
         return False
     if suffix == ".go":
         has_quality_record = re.search(
