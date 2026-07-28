@@ -8,6 +8,10 @@ import { getCatalogModel } from './model-catalog'
 import type { ModelManager } from './model-manager'
 import { OpenAiTranscriptionSession } from './openai-transcription-client'
 import { readOpenAiSpeechApiKey } from './openai-api-key-store'
+import {
+  DictationQualityRun,
+  type TranscriptionQualityProvenance
+} from './dictation-quality-contract'
 
 export const START_DICTATION_TIMEOUT_MS = 60_000
 const STOP_DICTATION_TIMEOUT_MS = 60_000
@@ -15,12 +19,19 @@ export const IDLE_WORKER_TEARDOWN_MS = 60 * 60 * 1000
 
 export type SttEvent =
   | { type: 'ready' }
-  | { type: 'partial'; text?: string }
-  | { type: 'final'; text?: string }
+  | ({ type: 'partial'; text?: string } & TranscriptionQualityProvenance)
+  | ({ type: 'final'; text?: string } & TranscriptionQualityProvenance)
   | { type: 'stopped' }
   | { type: 'error'; error?: string }
 
 export type SttEventSink = (event: SttEvent) => void
+
+type WorkerSttEvent =
+  | { type: 'ready' }
+  | { type: 'partial'; text?: string }
+  | { type: 'final'; text?: string }
+  | { type: 'stopped' }
+  | { type: 'error'; error?: string }
 
 type StopInFlight = {
   worker: Worker
@@ -42,6 +53,7 @@ export class SttService {
   private starting = false
   private canceledOwners = new Set<string>()
   private eventSink: SttEventSink | null = null
+  private qualityRun: DictationQualityRun | null = null
   private idleTeardownTimer: NodeJS.Timeout | null = null
   private stopInFlight: StopInFlight | null = null
   // Why: stop resolves only after the worker flushes; in-flight feedAudio IPC
@@ -101,6 +113,11 @@ export class SttService {
     if (!manifest) {
       throw new Error(`Unknown model: ${modelId}`)
     }
+    this.qualityRun = new DictationQualityRun({
+      modelId,
+      provider: manifest.provider,
+      modelArtifactVersion: manifest.archiveSha256
+    })
 
     if (manifest.provider === 'openai') {
       if (this.worker) {
@@ -225,9 +242,23 @@ export class SttService {
       startupTimeout.unref?.()
     })
 
-    const onWorkerMessage = (msg: SttEvent) => {
+    const onWorkerMessage = (msg: WorkerSttEvent) => {
       if (this.worker === worker) {
-        this.eventSink?.(msg)
+        if (msg.type === 'partial' || msg.type === 'final') {
+          const { audio_sha256, engine_id, model_version, profile, quality_status, ...provenance } =
+            this.qualityRun!.snapshot()
+          this.eventSink?.({
+            ...msg,
+            ...provenance,
+            audio_sha256,
+            engine_id,
+            model_version,
+            profile,
+            quality_status
+          })
+        } else {
+          this.eventSink?.(msg)
+        }
       }
     }
 
@@ -305,8 +336,10 @@ export class SttService {
     }
     if (this.cloudSession) {
       this.cloudSession.feedAudio(samples, sampleRate)
+      this.qualityRun?.addAudio(samples, sampleRate)
       return
     }
+    this.qualityRun?.addAudio(samples, sampleRate)
     this.worker?.postMessage({ type: 'feed', samples, sampleRate }, [samples.buffer as ArrayBuffer])
   }
 
@@ -333,7 +366,11 @@ export class SttService {
         try {
           const text = await session.finish()
           if (text) {
-            this.eventSink?.({ type: 'final', text })
+            this.eventSink?.({
+              type: 'final',
+              text,
+              ...this.qualityRun!.snapshot()
+            })
           }
         } catch (error) {
           this.eventSink?.({

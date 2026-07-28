@@ -1,0 +1,39 @@
+{
+  "contract_version": "1.0",
+  "contract_module": "src/main/speech/dictation-quality-contract.ts",
+  "profiles": ["dictation"],
+  "entrypoints": ["src/main/speech/stt-service.ts"],
+  "evaluation_policy": "eval/dictation-v1.json",
+  "rights_registry": "eval/rights-register.jsonl",
+  "regression_tests": [
+    "src/main/speech/stt-service.test.ts",
+    "src/main/speech/dictation-quality-contract.test.ts"
+  ],
+  "smoke_evidence": "eval/dictation-fixture-smoke.json",
+  "quality_status_values": ["PASS", "FAIL", "UNKNOWN"],
+  "source_roles": ["teacher_raw", "human_gold", "candidate", "production"],
+  "provenance_fields": [
+    "contract_version",
+    "run_id",
+    "created_at",
+    "audio_sha256",
+    "audio_duration_ms",
+    "profile",
+    "source_role",
+    "engine_id",
+    "asr_backend",
+    "model_name",
+    "model_version",
+    "diarizer",
+    "diarizer_version",
+    "aligner",
+    "lexicon_version",
+    "prompt_version",
+    "postprocessor",
+    "postprocessor_version",
+    "fallback_reason",
+    "quality_status",
+    "evaluation_id"
+  ],
+  "external_teacher_runtime_dependency": false
+}

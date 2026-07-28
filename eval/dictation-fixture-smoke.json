@@ -1,0 +1,8 @@
+{
+  "profile": "dictation",
+  "evidence_type": "fixture",
+  "network_used": false,
+  "schema_status": "PASS",
+  "quality_status": "UNKNOWN",
+  "reason": "locked human-gold evaluation and live evidence are not available"
+}

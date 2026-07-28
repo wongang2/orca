@@ -1,0 +1,15 @@
+{
+  "evaluation_id": "dictation-v1",
+  "profile": "dictation",
+  "locked": true,
+  "human_gold_available": false,
+  "required_metrics": [
+    "character_error_rate",
+    "number_date_proper_noun_error",
+    "partial_final_stability",
+    "command_misrecognition",
+    "punctuation_error",
+    "p0_meaning_error"
+  ],
+  "quality_status": "UNKNOWN"
+}

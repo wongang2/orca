@@ -177,6 +177,38 @@ describe('SttService', () => {
     expect(getCreatedWorkerCount()).toBe(1)
   })
 
+  it('adds dictation quality provenance and the real audio hash to local result events', async () => {
+    const events: unknown[] = []
+    const service = new SttService({
+      getModelState: vi.fn().mockResolvedValue({ id: 'model-a', status: 'ready' }),
+      getModelDir: vi.fn().mockReturnValue('/tmp/model-a')
+    } as never)
+
+    await service.startDictation('model-a', (event) => events.push(event), undefined, 'desktop')
+    service.feedAudio(new Float32Array([0.25, -0.25]), 16000, 'desktop')
+    getLastWorker()!.emit('message', { type: 'final', text: 'local result' })
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'final',
+        text: 'local result',
+        contract_version: '1.0',
+        profile: 'dictation',
+        source_role: 'candidate',
+        engine_id: 'sherpa-onnx',
+        asr_backend: 'sherpa-onnx',
+        model_name: 'model-a',
+        model_version: 'model-a',
+        diarizer: 'not_applicable',
+        diarizer_version: 'not_applicable',
+        aligner: 'not_applicable',
+        fallback_reason: null,
+        quality_status: 'UNKNOWN',
+        audio_sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+      })
+    )
+  })
+
   it('keeps an idle worker warm for an hour', async () => {
     vi.useFakeTimers()
     try {
@@ -342,11 +374,47 @@ describe('SttService', () => {
     expect(getCloudSessions()).toHaveLength(1)
     expect(getCloudSessions()[0].feedCalls).toHaveLength(1)
     expect(sink).toHaveBeenCalledWith({ type: 'ready' })
-    expect(sink).toHaveBeenCalledWith({
-      type: 'final',
-      text: 'openai-model:test-openai-key'
-    })
+    expect(sink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'final',
+        text: 'openai-model:test-openai-key',
+        contract_version: '1.0',
+        profile: 'dictation',
+        engine_id: 'openai-transcription',
+        asr_backend: 'openai',
+        model_name: 'model',
+        model_version: 'model',
+        fallback_reason: null,
+        quality_status: 'UNKNOWN',
+        audio_sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+      })
+    )
     expect(sink).toHaveBeenCalledWith({ type: 'stopped' })
+  })
+
+  it('marks the audio hash unavailable when final arrives without audio bytes', async () => {
+    const events: unknown[] = []
+    const service = new SttService({
+      getModelState: vi.fn().mockResolvedValue({ id: 'openai-model', status: 'ready' }),
+      getModelDir: vi.fn().mockReturnValue('/tmp/model-a')
+    } as never)
+
+    await service.startDictation(
+      'openai-model',
+      (event) => events.push(event),
+      undefined,
+      'desktop'
+    )
+    await service.stopDictation('desktop')
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'final',
+        audio_sha256: null,
+        audio_sha256_unavailable_reason: 'no_audio_bytes_received',
+        quality_status: 'UNKNOWN'
+      })
+    )
   })
 
   it('reads the OpenAI key only when finishing cloud dictation', async () => {
