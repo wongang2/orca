@@ -22,6 +22,7 @@ export type TranscriptionQualityProvenance = {
   postprocessor_version: null
   fallback_reason: string | null
   quality_status: 'UNKNOWN'
+  delivery_status: 'draft_unverified'
   evaluation_id: null
 }
 
@@ -75,6 +76,7 @@ export class DictationQualityRun {
       postprocessor_version: null,
       fallback_reason: null,
       quality_status: 'UNKNOWN',
+      delivery_status: 'draft_unverified',
       evaluation_id: null
     }
   }

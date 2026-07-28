@@ -27,6 +27,7 @@ describe('dictation quality contract', () => {
     expect(provenance.diarizer_version).toBe('not_applicable')
     expect(provenance.aligner).toBe('not_applicable')
     expect(provenance.quality_status).toBe('UNKNOWN')
+    expect(provenance.delivery_status).toBe('draft_unverified')
   })
 
   it('keeps the repository manifest wired into the normal test suite', () => {
@@ -43,7 +44,8 @@ describe('dictation quality contract', () => {
       'diarizer',
       'profile',
       'fallback_reason',
-      'quality_status'
+      'quality_status',
+      'delivery_status'
     ]
 
     expect(manifest.profiles).toEqual(['dictation'])
@@ -55,6 +57,10 @@ describe('dictation quality contract', () => {
       expect.arrayContaining(['teacher_raw', 'human_gold', 'candidate', 'production'])
     )
     expect(manifest.provenance_fields).toEqual(expect.arrayContaining(requiredProvenance))
+    expect(manifest.delivery_policy).toEqual({
+      unknown: 'draft_unverified',
+      final_verified_requires: ['quality_status=PASS', 'source_role=production']
+    })
     expect(manifest.entrypoints).toContain('src/main/speech/stt-service.ts')
     expect(manifest.regression_tests).toEqual(
       expect.arrayContaining([

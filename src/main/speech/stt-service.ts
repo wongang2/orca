@@ -74,6 +74,9 @@ export class SttService {
     hotwordsFilePath?: string,
     owner = 'desktop'
   ): Promise<void> {
+    if (this.stopping) {
+      throw new Error('dictation_already_active')
+    }
     if (this.starting) {
       if (this.startingOwner !== owner) {
         throw new Error('dictation_already_active')
@@ -113,7 +116,7 @@ export class SttService {
     if (!manifest) {
       throw new Error(`Unknown model: ${modelId}`)
     }
-    this.qualityRun = new DictationQualityRun({
+    const qualityRun = new DictationQualityRun({
       modelId,
       provider: manifest.provider,
       modelArtifactVersion: manifest.archiveSha256
@@ -131,6 +134,7 @@ export class SttService {
         throw new Error(`Model not ready: ${modelState.status}`)
       }
 
+      this.qualityRun = qualityRun
       this.cloudSession = new OpenAiTranscriptionSession(modelId, readOpenAiSpeechApiKey)
       this.activeModelId = modelId
       this.activeHotwordsFilePath = undefined
@@ -164,6 +168,7 @@ export class SttService {
         this.activeHotwordsFilePath === hotwordsFilePath &&
         this.stopInFlight?.worker !== worker
       ) {
+        this.qualityRun = qualityRun
         this.eventSink = sink
         sink({ type: 'ready' })
         return
@@ -184,6 +189,7 @@ export class SttService {
     const workerPath = this.getWorkerPath()
     const sherpaModulePath = this.getSherpaModulePath()
 
+    this.qualityRun = qualityRun
     this.worker = new Worker(workerPath, {
       workerData: { sherpaModulePath }
     })
@@ -362,23 +368,25 @@ export class SttService {
       this.stopping = true
       try {
         const session = this.cloudSession
+        const qualityRun = this.qualityRun
+        const capturedSink = this.eventSink
         this.cloudSession = null
         try {
           const text = await session.finish()
           if (text) {
-            this.eventSink?.({
+            capturedSink?.({
               type: 'final',
               text,
-              ...this.qualityRun!.snapshot()
+              ...qualityRun!.snapshot()
             })
           }
         } catch (error) {
-          this.eventSink?.({
+          capturedSink?.({
             type: 'error',
             error: error instanceof Error ? error.message : String(error)
           })
         } finally {
-          this.eventSink?.({ type: 'stopped' })
+          capturedSink?.({ type: 'stopped' })
           this.activeModelId = null
           this.activeHotwordsFilePath = undefined
           this.activeOwner = null

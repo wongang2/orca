@@ -209,6 +209,58 @@ describe('SttService', () => {
     )
   })
 
+  it('keeps the old provenance while switching models during worker stop', async () => {
+    const firstEvents: Record<string, unknown>[] = []
+    const secondEvents: Record<string, unknown>[] = []
+    const service = new SttService({
+      getModelState: vi.fn().mockResolvedValue({ id: 'model-a', status: 'ready' }),
+      getModelDir: vi.fn().mockReturnValue('/tmp/model-a')
+    } as never)
+
+    await service.startDictation(
+      'model-a',
+      (event) => firstEvents.push(event as Record<string, unknown>),
+      undefined,
+      'desktop'
+    )
+    service.feedAudio(new Float32Array([0.25]), 16000, 'desktop')
+    const firstWorker = getLastWorker()
+    firstWorker!.emitStoppedOnStop = false
+
+    const secondStart = service.startDictation(
+      'model-b',
+      (event) => secondEvents.push(event as Record<string, unknown>),
+      undefined,
+      'desktop'
+    )
+    await Promise.resolve()
+    firstWorker!.emit('message', { type: 'final', text: 'old session final' })
+    firstWorker!.emit('message', { type: 'stopped' })
+    await secondStart
+
+    getLastWorker()!.emit('message', { type: 'final', text: 'new session final' })
+
+    expect(firstEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'final',
+        text: 'old session final',
+        model_name: 'model-a',
+        delivery_status: 'draft_unverified'
+      })
+    )
+    expect(secondEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'final',
+        text: 'new session final',
+        model_name: 'model-b',
+        delivery_status: 'draft_unverified'
+      })
+    )
+    const firstFinal = firstEvents.find((event) => event.text === 'old session final')
+    const secondFinal = secondEvents.find((event) => event.text === 'new session final')
+    expect(firstFinal?.run_id).not.toBe(secondFinal?.run_id)
+  })
+
   it('keeps an idle worker warm for an hour', async () => {
     vi.useFakeTimers()
     try {

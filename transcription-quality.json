@@ -2,7 +2,9 @@
   "contract_version": "1.0",
   "contract_module": "src/main/speech/dictation-quality-contract.ts",
   "profiles": ["dictation"],
-  "entrypoints": ["src/main/speech/stt-service.ts"],
+  "entrypoints": ["src/main/speech/stt-service.ts", "src/main/speech/stt-worker.ts"],
+  "teacher_entrypoints": [],
+  "delivery_status": "draft_unverified",
   "evaluation_policy": "eval/dictation-v1.json",
   "rights_registry": "eval/rights-register.jsonl",
   "regression_tests": [
@@ -33,7 +35,13 @@
     "postprocessor_version",
     "fallback_reason",
     "quality_status",
+    "delivery_status",
     "evaluation_id"
   ],
+  "delivery_status_values": ["draft_unverified", "final_verified"],
+  "delivery_policy": {
+    "unknown": "draft_unverified",
+    "final_verified_requires": ["quality_status=PASS", "source_role=production"]
+  },
   "external_teacher_runtime_dependency": false
 }
