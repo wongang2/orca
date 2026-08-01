@@ -286,7 +286,6 @@ export default function TerminalPane({
 }: TerminalPaneProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const managerRef = useRef<PaneManager | null>(null)
-  const paneFontSizesRef = useRef<Map<number, number>>(new Map())
   const expandedPaneIdRef = useRef<number | null>(null)
   const expandedStyleSnapshotRef = useRef<Map<HTMLElement, { display: string; flex: string }>>(
     new Map()
@@ -1404,7 +1403,6 @@ export default function TerminalPane({
     managerRef,
     containerRef,
     expandedStyleSnapshotRef,
-    paneFontSizesRef,
     paneTransportsRef,
     paneCwdRef,
     paneMode2031Ref,
@@ -1689,7 +1687,7 @@ export default function TerminalPane({
     }
   }, [consumePendingCodexPaneRestart, handleRestartCodexPane, pendingCodexPaneRestartIds])
 
-  useTerminalFontZoom({ isActive, containerRef, managerRef, paneFontSizesRef, settingsRef })
+  useTerminalFontZoom({ isActive, containerRef, managerRef, settingsRef, updateSettings })
 
   useTerminalKeyboardShortcuts({
     tabId,

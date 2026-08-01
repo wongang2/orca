@@ -371,7 +371,6 @@ describe('applyTerminalAppearance theme assignment', () => {
       settings,
       true,
       new Map(),
-      new Map(),
       'false',
       new Map(),
       new Map()
@@ -391,6 +390,25 @@ describe('applyTerminalAppearance theme assignment', () => {
     // Identity-stable theme means xterm never re-runs _setTheme, so a TUI's modifyColors mutation survives the font tweak.
     expect(pane.terminal.options.theme).toBe(firstTheme)
     expect(pane.terminal.options.fontSize).toBe(settings.terminalFontSize + 2)
+  })
+
+  it('reapplies the global font size uniformly to every pane', () => {
+    const panes = [makePane(1), makePane(2)]
+    panes[0].terminal.options.fontSize = 11
+    panes[1].terminal.options.fontSize = 19
+    const settings = { ...getDefaultSettings('/tmp'), terminalFontSize: 16 }
+
+    applyTerminalAppearance(
+      makeManager(panes),
+      settings,
+      true,
+      new Map(),
+      'false',
+      new Map(),
+      new Map()
+    )
+
+    expect(panes.map((pane) => pane.terminal.options.fontSize)).toEqual([16, 16])
   })
 
   it('still assigns a fresh theme when composed values actually change', () => {
@@ -520,16 +538,7 @@ describe('publishTerminalViewAttributesAtAppStart', () => {
         setPaneLigaturesEnabled: vi.fn(),
         setPaneStyleOptions: vi.fn()
       } as unknown as PaneManager
-      applyTerminalAppearance(
-        manager,
-        settings,
-        true,
-        new Map(),
-        new Map(),
-        'false',
-        new Map(),
-        new Map()
-      )
+      applyTerminalAppearance(manager, settings, true, new Map(), 'false', new Map(), new Map())
       expect(publishMock).toHaveBeenCalledTimes(1)
     } finally {
       delete (globalThis as { window?: unknown }).window

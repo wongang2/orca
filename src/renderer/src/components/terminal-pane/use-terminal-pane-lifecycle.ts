@@ -251,7 +251,6 @@ type UseTerminalPaneLifecycleDeps = {
   expandedStyleSnapshotRef: React.MutableRefObject<
     Map<HTMLElement, { display: string; flex: string }>
   >
-  paneFontSizesRef: React.RefObject<Map<number, number>>
   paneTransportsRef: React.RefObject<Map<number, PtyTransport>>
   /** Per-pane live cwd (from the OSC 7 handler); read synchronously by split handlers for cache hits. */
   paneCwdRef: React.RefObject<PaneCwdMap>
@@ -511,7 +510,6 @@ export function useTerminalPaneLifecycle({
   managerRef,
   containerRef,
   expandedStyleSnapshotRef,
-  paneFontSizesRef,
   paneTransportsRef,
   paneCwdRef,
   paneMode2031Ref,
@@ -590,7 +588,6 @@ export function useTerminalPaneLifecycle({
       manager,
       currentSettings,
       systemPrefersDarkRef.current,
-      paneFontSizesRef.current,
       paneTransportsRef.current,
       effectiveMacOptionAsAltRef.current,
       paneMode2031Ref.current,
@@ -1247,7 +1244,6 @@ export function useTerminalPaneLifecycle({
           paneTransportsRef.current.delete(paneId)
         }
         clearRuntimePaneTitle(tabId, paneId)
-        paneFontSizesRef.current.delete(paneId)
         replayingPanesRef.current.delete(paneId)
         restoredViewportBlankingPanesRef.current.delete(paneId)
         // Clean up pane title state so closed panes don't leave stale entries.
