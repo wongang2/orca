@@ -98,6 +98,7 @@ export function WorktreeCardDisplayMenuItem({
             >
               {t('sidebar.cardSlot.detailsRow', 'Details row')}
             </DropdownMenuCheckboxItem>
+            <DenseSidebarMenuItem />
             <DropdownMenuSeparator />
           </>
         ) : null}

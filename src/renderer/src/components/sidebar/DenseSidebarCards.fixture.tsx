@@ -61,7 +61,7 @@ const WORKTREES = new Map<string, Worktree>(
   })
 )
 
-function seed(dense: boolean): void {
+function seed(dense: boolean, newStyle = false): void {
   seedWorkspaces(SEEDS, now)
   agentExpansion.clearWorktreeAgentExpansionStateForTests()
   useAppStore.setState((state) => ({
@@ -80,7 +80,7 @@ function seed(dense: boolean): void {
     ],
     agentActivityDisplayMode: 'compact',
     settings: state.settings
-      ? { ...state.settings, experimentalNewWorktreeCardStyle: false, denseSidebar: dense }
+      ? { ...state.settings, experimentalNewWorktreeCardStyle: newStyle, denseSidebar: dense }
       : state.settings
   }))
 }
@@ -117,5 +117,18 @@ export const dense = defineFixture({ width: 300, setup: () => seed(true), render
 export const denseNarrow = defineFixture({
   width: 220,
   setup: () => seed(true),
+  render: () => <Cards />
+})
+
+/** The experimental card style, which the live app may use, with the dense sidebar off and on. */
+export const newStyleDefault = defineFixture({
+  width: 300,
+  setup: () => seed(false, true),
+  render: () => <Cards />
+})
+
+export const newStyleDense = defineFixture({
+  width: 300,
+  setup: () => seed(true, true),
   render: () => <Cards />
 })
