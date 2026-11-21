@@ -1,4 +1,5 @@
 import { defineFixture } from '../../component-fixtures/component-fixture'
+import { useAppStore } from '@/store'
 import { stubBots } from '../../component-fixtures/fixture-bots'
 import { makeFolderWorkspace } from '@/store/folder-workspaces/folder-workspace.test-fixture'
 import type { Bot } from '../../../../shared/bot-types'
@@ -158,4 +159,15 @@ export const overflowWithWorkspaces = defineFixture({
       <SidebarFrame />
     </ConfirmationDialogProvider>
   )
+})
+
+/** The same overflow with the dense sidebar on: more bot rows fit the same split height. */
+export const overflowWithWorkspacesDense = defineFixture({
+  ...overflowWithWorkspaces,
+  setup: () => {
+    overflowWithWorkspaces.setup?.()
+    useAppStore.setState((state) => ({
+      settings: state.settings ? { ...state.settings, denseSidebar: true } : state.settings
+    }))
+  }
 })

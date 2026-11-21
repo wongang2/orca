@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useReducer, useRef } from 'react'
+import { useCallback, useMemo, useReducer, useRef } from 'react'
 import type React from 'react'
 import {
   measureElement as measureVirtualElementSize,
@@ -21,6 +21,7 @@ import type { RenderRow } from '../listing/render-row'
 import { getWorktreeSidebarRevealTopInset } from '../navigation/worktree-sidebar-reveal'
 import type { ProgrammaticScrollMarks } from '@/lib/list-interaction/virtualized-scrolling/programmatic-scroll-marks'
 import { createSidebarSmoothReveal } from './sidebar-smooth-reveal'
+import { useDensityScrollAnchor } from './use-density-scroll-anchor'
 
 export type WorktreeListVirtualizer = ReturnType<typeof useWorktreeListVirtualizer>
 
@@ -177,15 +178,7 @@ export function useWorktreeListVirtualizer(args: {
     observeElementOffset: smoothReveal.observeOffset,
     getItemKey: getVirtualItemKey
   })
-  const measuredDenseRef = useRef(dense)
-  useLayoutEffect(() => {
-    if (measuredDenseRef.current === dense) {
-      return
-    }
-    measuredDenseRef.current = dense
-    // Header slots come from estimates, so a density switch must drop the cached sizes.
-    virtualizer.measure()
-  }, [dense, virtualizer])
+  useDensityScrollAnchor(virtualizer, dense)
 
   return {
     virtualizer,
