@@ -5,6 +5,7 @@ import { AttachedWorktreeCards } from '@/components/sidebar/AttachedWorktreeCard
 import { useTranslate } from '@/i18n/use-translate'
 import { cn } from '@/lib/class-names'
 import { useAppStore } from '@/store'
+import { selectDenseSidebar } from '@/store/appearance/sidebar-density'
 import { selectDrawsNewWorktreeCards } from '@/store/appearance/worktree-card-style'
 import type { Bot } from '../../../../shared/bot-types'
 import type { Worktree } from '../../../../shared/worktree/types'
@@ -72,6 +73,7 @@ export function BotSidebarEntry({
   const frameDrag = drag && offline ? { ...drag, onPointerDown: ignorePointerDown } : drag
   const groupKey = getLineageGroupKey(folderWorkspaceKey(home.id))
   const folded = useAppStore((s) => s.collapsedGroups.has(groupKey))
+  const dense = useAppStore(selectDenseSidebar)
   const toggleCollapsedGroup = useAppStore((s) => s.toggleCollapsedGroup)
   const newCardStyle = useAppStore(selectDrawsNewWorktreeCards)
   // Full-page Tasks/Activity views have no open workspace line, as in AttachedWorktreeCards.
@@ -157,7 +159,8 @@ export function BotSidebarEntry({
         <div
           className={cn(
             // Nested workspace rows' spacing, so a selected row's highlight clears its neighbours.
-            'flex flex-col gap-1 transition-opacity duration-200',
+            'flex flex-col transition-opacity duration-200',
+            dense ? 'gap-0.5' : 'gap-1',
             bot.paused && 'opacity-60'
           )}
           style={{

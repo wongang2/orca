@@ -1,4 +1,5 @@
 import { defineFixture } from '../../component-fixtures/component-fixture'
+import { useAppStore } from '@/store'
 import { stubBots } from '../../component-fixtures/fixture-bots'
 import { makeFolderWorkspace } from '@/store/folder-workspaces/folder-workspace.test-fixture'
 import { makeWorktree } from '@/store/slices/worktrees/worktree.test-fixture'
@@ -402,3 +403,14 @@ export const runListed = runFixture(false)
 
 /** Opened from a notification: the same row, selected in place. */
 export const runOpen = runFixture(true)
+
+/** The same day with the dense sidebar on: a smaller picture and tighter padding on the bot's row. */
+export const normalDense = defineFixture({
+  ...normal,
+  setup: () => {
+    normal.setup?.()
+    useAppStore.setState((state) => ({
+      settings: state.settings ? { ...state.settings, denseSidebar: true } : state.settings
+    }))
+  }
+})

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useRef } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useReducer, useRef } from 'react'
 import type React from 'react'
 import {
   measureElement as measureVirtualElementSize,
@@ -9,9 +9,12 @@ import {
   estimateRenderRowSize,
   extractWorktreeVirtualRowIndexes,
   getStickyHeaderIndexes,
+  getNonCardRowTrailingGap,
   getVirtualRowIndex,
   WORKTREE_SIDEBAR_VIRTUAL_ROW_GAP
 } from './virtual-rows'
+import { useAppStore } from '@/store'
+import { selectDenseSidebar } from '@/store/appearance/sidebar-density'
 import { getRenderRowKey } from '../listing/render-row'
 import type { LineageRowProjection } from '../listing/lineage-row-projection'
 import type { RenderRow } from '../listing/render-row'
@@ -50,6 +53,7 @@ export function useWorktreeListVirtualizer(args: {
   const activeStickyHeaderIndexRef = useRef<number | null>(null)
   const activeStickyHostIndexRef = useRef<number | null>(null)
   const stickyRangeStartIndexRef = useRef(0)
+  const dense = useAppStore(selectDenseSidebar)
 
   const getVirtualItemKey = useCallback(
     (index: number) => {
@@ -96,7 +100,8 @@ export function useWorktreeListVirtualizer(args: {
             renderRows,
             index ?? -1,
             firstHeaderIndex,
-            activeStickyHeaderIndexRef.current
+            activeStickyHeaderIndexRef.current,
+            dense
           )
         )
       }
@@ -109,7 +114,8 @@ export function useWorktreeListVirtualizer(args: {
           renderRows,
           index,
           firstHeaderIndex,
-          activeStickyHeaderIndexRef.current
+          activeStickyHeaderIndexRef.current,
+          dense
         )
       }
       const row = index === null ? undefined : renderRows[index]
@@ -118,9 +124,11 @@ export function useWorktreeListVirtualizer(args: {
       }
       // Why: TanStack returns the cached slot size for entry-less measures, so the gap must be added to the DOM box or it compounds on every remeasure.
       const box = entry?.borderBoxSize?.[0]
-      return Math.round(box ? box.blockSize : element.offsetHeight) + 6
+      return (
+        Math.round(box ? box.blockSize : element.offsetHeight) + getNonCardRowTrailingGap(dense)
+      )
     },
-    [firstHeaderIndex, isCurrentVirtualRowElement, renderRows]
+    [dense, firstHeaderIndex, isCurrentVirtualRowElement, renderRows]
   )
 
   const [smoothScrollRevision, onRetired] = useReducer((revision: number) => revision + 1, 0)
@@ -138,7 +146,8 @@ export function useWorktreeListVirtualizer(args: {
           renderRows,
           index,
           firstHeaderIndex,
-          activeStickyHeaderIndexRef.current
+          activeStickyHeaderIndexRef.current,
+          dense
         ) +
         (renderRows[index]?.type === 'item' || renderRows[index]?.type === 'folder-workspace'
           ? frame.before + frame.closing + frame.after
@@ -168,6 +177,15 @@ export function useWorktreeListVirtualizer(args: {
     observeElementOffset: smoothReveal.observeOffset,
     getItemKey: getVirtualItemKey
   })
+  const measuredDenseRef = useRef(dense)
+  useLayoutEffect(() => {
+    if (measuredDenseRef.current === dense) {
+      return
+    }
+    measuredDenseRef.current = dense
+    // Header slots come from estimates, so a density switch must drop the cached sizes.
+    virtualizer.measure()
+  }, [dense, virtualizer])
 
   return {
     virtualizer,

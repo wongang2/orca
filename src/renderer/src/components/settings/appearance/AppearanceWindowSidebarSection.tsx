@@ -27,6 +27,7 @@ import {
 } from './appearance-usage-percentage-search'
 
 import { LeftSidebarAppearanceSetting } from './LeftSidebarAppearanceSetting'
+import { DenseSidebarSetting } from './DenseSidebarSetting'
 import { getStatusBarUsageFormatEntry } from './appearance-status-bar-usage-format-search'
 import { StatusBarUsageFormatSetting } from './StatusBarUsageFormatSetting'
 
@@ -272,6 +273,7 @@ export function AppearanceWindowSidebarSection({
                     />
                   }
                 />
+                <DenseSidebarSetting />
               </SearchableSetting>
 
               <SearchableSetting

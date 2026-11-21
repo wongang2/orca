@@ -70,6 +70,7 @@ export function WorktreeCardSurface({ card }: { card: WorktreeCardController }):
   )
   const { cardStyle } = geometryFor(frame.statusLane)
   const titleOnlyCard = frame.singleLine
+  const dense = card.settings?.denseSidebar === true
 
   const cardBody = (
     <div
@@ -77,7 +78,15 @@ export function WorktreeCardSurface({ card }: { card: WorktreeCardController }):
         WORKTREE_CARD_SURFACE_CLASS_NAME,
         'flex flex-col',
         // A bot's line is as tall as its chat's row.
-        titleOnlyCard ? (card.compactLine ? 'py-px' : 'py-2') : 'pt-1.25 pb-1.5',
+        titleOnlyCard
+          ? card.compactLine
+            ? 'py-px'
+            : dense
+              ? 'py-0.5'
+              : 'py-2'
+          : dense
+            ? 'py-0.5'
+            : 'pt-1.25 pb-1.5',
         flushSurface && 'w-[calc(100%-0.25rem)]',
         // Navigation updates the live attribute before React; it must own the complete active style.
         isLineageDropTarget

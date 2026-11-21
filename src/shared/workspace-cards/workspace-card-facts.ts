@@ -103,6 +103,8 @@ export type WorkspaceCardFacts = {
     /** Card display's "Details row": the new style draws its row under the name only when on. */
     detailsRow: boolean
     agentRows: 'full' | 'compact'
+    /** Dense sidebar: the host badge and indicators ride the title line instead of a row of their own. */
+    dense: boolean
   }
   env: { projectGroups: boolean }
 }

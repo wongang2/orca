@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { selectDenseSidebar } from '@/store/appearance/sidebar-density'
 import { Bell, BellOff, Pencil } from 'lucide-react'
 import {
   ContextMenu,
@@ -83,6 +84,7 @@ export function BotSidebarRow({
   const setWorkspaceUnreadByUser = useAppStore((s) => s.setWorkspaceUnreadByUser)
   const [renameRequested, setRenameRequested] = useState(false)
   const [hoverOpen, setHoverOpen] = useState(false)
+  const dense = useAppStore(selectDenseSidebar)
   const toggleUnread = (): void => setWorkspaceUnreadByUser(workspaceId, !isUnread, hostId)
   const badge = {
     status,
@@ -101,7 +103,8 @@ export function BotSidebarRow({
             WORKTREE_CARD_SURFACE_CLASS_NAME,
             // A two-line workspace card's padding, so bots sit as tight as Projects' rows.
             // A size container: the fold strip slims down in a narrow sidebar.
-            'group/bot-row @container/bot-row flex items-center pt-1.25 pb-1.25 pl-1.25',
+            'group/bot-row @container/bot-row flex items-center pl-1.25',
+            dense ? 'py-0.5' : 'pt-1.25 pb-1.25',
             !isActive && 'worktree-sidebar-card-hover',
             dimmed && 'opacity-60'
           )}

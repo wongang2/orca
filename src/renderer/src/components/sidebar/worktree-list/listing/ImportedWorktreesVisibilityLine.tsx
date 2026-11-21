@@ -9,6 +9,8 @@ import type { ExecutionHostId } from '../../../../../../shared/execution-host/ex
 import { getExternalWorktreeParentPath } from '../../../../../../shared/worktree/visibility/external-worktree-visibility'
 import { normalizeRuntimePathForComparison } from '../../../../../../shared/file-access/cross-platform-path'
 import { useTranslate } from '@/i18n/use-translate'
+import { useAppStore } from '@/store'
+import { selectDenseSidebar } from '@/store/appearance/sidebar-density'
 
 export type ImportedWorktreeVisibilityPreview = {
   id?: string
@@ -82,6 +84,7 @@ export default function ImportedWorktreesVisibilityLine({
   className
 }: ImportedWorktreesVisibilityLineProps): React.JSX.Element | null {
   const t = useTranslate()
+  const dense = useAppStore(selectDenseSidebar)
   const [isExpanded, setIsExpanded] = useState(false)
   const [expandedGroupPathKeys, setExpandedGroupPathKeys] = useState<Set<string>>(new Set())
   const hiddenCount = hiddenWorktrees.length
@@ -134,11 +137,16 @@ export default function ImportedWorktreesVisibilityLine({
   return (
     <section
       aria-busy={pending}
-      className={cn('mx-1 my-0.5 ml-3 text-worktree-sidebar-foreground', className)}
+      className={cn(
+        'mx-1 ml-3 text-worktree-sidebar-foreground',
+        dense ? 'my-0' : 'my-0.5',
+        className
+      )}
     >
       <div
         className={cn(
-          'flex min-h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-[11px] leading-none text-muted-foreground transition-colors',
+          'flex min-w-0 items-center gap-1.5 rounded-md px-1.5 text-[11px] leading-none text-muted-foreground transition-colors',
+          dense ? 'min-h-5' : 'min-h-7',
           'hover:bg-worktree-sidebar-accent hover:text-worktree-sidebar-accent-foreground'
         )}
       >

@@ -83,6 +83,7 @@ export function buildWorktreeVirtualRowContext(args: BuildArgs): WorktreeVirtual
     onWorkspaceStatusDrop: statusDrag.handleWorkspaceStatusDrop,
     header: {
       groupBy: props.groupBy,
+      dense: args.settings?.denseSidebar === true,
       collapsedGroups: props.collapsedGroups,
       workspaceStatuses: props.workspaceStatuses,
       projectGroups: args.projectGroups,

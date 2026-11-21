@@ -6,6 +6,7 @@ import { openBotHomeTab } from '@/lib/bot-catalog'
 import { formatShortTimeAgo } from '@/lib/time-format/short-time-ago'
 import { cn } from '@/lib/class-names'
 import { useAppStore } from '@/store'
+import { selectDenseSidebar } from '@/store/appearance/sidebar-density'
 import type { Bot } from '../../../../shared/bot-types'
 import {
   botChatFoldKey,
@@ -159,6 +160,7 @@ function BotSidebarChat({
   const t = useTranslate()
   const { chat, foldable, open, lines, paging, steps } = view
   const { active, toggle } = useBotChatPress(bot, chat.chatId)
+  const dense = useAppStore(selectDenseSidebar)
   const title = chatTitle(t, chat)
   const label = useBotChatLabel(chat, title)
   const trailing = trailingText(t, view.trailing)
@@ -175,7 +177,7 @@ function BotSidebarChat({
   }
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className={cn('flex flex-col', dense ? 'gap-0.5' : 'gap-1')}>
       {/* Its label names the slot's kind and state; pr-0.5 puts the chevron on the bot chevron's edge. */}
       <div
         role="button"
@@ -213,7 +215,7 @@ function BotSidebarChat({
         />
       </div>
       {open ? (
-        <div className="ml-3 flex flex-col gap-1">
+        <div className={cn('ml-3 flex flex-col', dense ? 'gap-0.5' : 'gap-1')}>
           <AttachedWorktreeCards
             roots={lines}
             lineageChildrenByParentIdentity={lineageChildrenByParentIdentity}

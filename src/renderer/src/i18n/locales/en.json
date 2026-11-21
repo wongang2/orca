@@ -76,6 +76,10 @@
     "failed": "Failed to open the file."
   },
   "sidebar": {
+    "density": {
+      "dense": "Dense sidebar",
+      "denseDescription": "Tighter rows, with host and indicators on the name line. Turn off for the default layout."
+    },
     "botsSplit": {
       "resize": "Resize bots and projects"
     },

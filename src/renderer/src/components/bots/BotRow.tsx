@@ -1,4 +1,6 @@
 import React, { useEffect } from 'react'
+import { selectDenseSidebar } from '@/store/appearance/sidebar-density'
+import { useAppStore } from '@/store'
 import { openBotSettings } from './bot-settings-open'
 import { ChevronDown, Copy, Pause, Play, Server, Settings, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -79,9 +81,15 @@ export function BotRow({
     work.catch((error: unknown) => toast.error(botErrorMessage(error)))
   }
   const handleDelete = useDeleteBot(bot)
+  const dense = useAppStore(selectDenseSidebar)
   return (
     <BotSidebarRow
-      avatar={<BotAvatar bot={bot} className="size-8 rounded-md text-sm" />}
+      avatar={
+        <BotAvatar
+          bot={bot}
+          className={dense ? 'size-6 rounded-md text-xs' : 'size-8 rounded-md text-sm'}
+        />
+      }
       name={bot.name}
       workspaceId={workspaceId}
       hostId={bot.hostId}

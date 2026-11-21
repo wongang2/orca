@@ -13,6 +13,8 @@ import type { RepoHeaderProjectActions } from './repo-header-project-actions'
 
 export type SectionHeaderRowContext = {
   groupBy: WorktreeGroupBy
+  /** Dense sidebar: a hairline instead of the spacer above each group. */
+  dense?: boolean
   projectHeaderHostContexts?: ReadonlyMap<string, ProjectHeaderHostContext>
   collapsedGroups: Set<string>
   workspaceStatuses: readonly WorkspaceStatusDefinition[]

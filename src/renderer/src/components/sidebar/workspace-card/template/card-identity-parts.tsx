@@ -88,7 +88,15 @@ function sshControl(props: Readonly<Record<string, unknown>>, card: Card): React
 
 function CardHostBadge({ card, label }: { card: Card; label: string }): React.JSX.Element {
   const wslDistro = useWslHostDistro(getWorktreeExecutionHostId(card.worktree, card.repo))
-  return wslDistro ? <WslHostMark distro={wslDistro} /> : <WorktreeHostContextBadge label={label} />
+  if (wslDistro) {
+    return <WslHostMark distro={wslDistro} />
+  }
+  // Dense rows share the title line, so the badge may shrink to keep more of the name; the full host stays in its tooltip.
+  return card.settings?.denseSidebar === true ? (
+    <WorktreeHostContextBadge label={label} title={label} className="min-w-10 shrink" />
+  ) : (
+    <WorktreeHostContextBadge label={label} />
+  )
 }
 
 function sidebarLabel(text: string, tooltip: unknown): React.ReactNode {

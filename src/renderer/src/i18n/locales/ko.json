@@ -20706,6 +20706,10 @@
     }
   },
   "sidebar": {
+    "density": {
+      "dense": "조밀하게 보기",
+      "denseDescription": "행 간격을 줄이고 기기 배지와 표시를 이름 줄에 함께 둡니다. 끄면 기본 배치로 돌아갑니다."
+    },
     "worktreeCardsIntroNotice": {
       "title": "새 카드 사용해 보기",
       "dismiss": "나중에",

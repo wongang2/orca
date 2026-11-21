@@ -131,7 +131,8 @@ export function buildWorkspaceCardFacts(card: WorktreeCardController): Workspace
       style: card.newCardStyle ? 'new' : card.compactCards ? 'compact' : 'classic',
       show: showOptions(card.cardProps),
       detailsRow: card.settings?.worktreeCardDetailsRow !== false,
-      agentRows: card.agentActivityDisplayMode === 'compact' ? 'compact' : 'full'
+      agentRows: card.agentActivityDisplayMode === 'compact' ? 'compact' : 'full',
+      dense: card.settings?.denseSidebar === true
     },
     env: { projectGroups: card.projectGroups.length > 0 }
   }

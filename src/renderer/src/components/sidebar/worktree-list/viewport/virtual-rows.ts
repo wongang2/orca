@@ -4,11 +4,22 @@ import { PINNED_GROUP_KEY } from '../../../../../../shared/sidebar-list/sections
 import type { RenderRow } from '../listing/render-row'
 
 export const GROUP_HEADER_ROW_HEIGHT = 28
+// SectionHeader's h-6 in the dense sidebar.
+const DENSE_GROUP_HEADER_ROW_HEIGHT = 24
 // Why: HostSectionHeader wraps its h-8 (32px) card in pt-1 (4px), so the row is 36px.
 export const HOST_HEADER_ROW_HEIGHT = 36
 export const WORKTREE_SIDEBAR_VIRTUAL_ROW_GAP = 0
 const SECONDARY_GROUP_HEADER_TOP_MARGIN = 4
+// Dense sidebar: SectionHeader's pt-0.5 spacer and a hairline below non-card rows.
+const DENSE_GROUP_HEADER_TOP_MARGIN = 2
+const NON_CARD_ROW_TRAILING_GAP = 6
+const DENSE_NON_CARD_ROW_TRAILING_GAP = 2
+
+export function getNonCardRowTrailingGap(dense: boolean): number {
+  return dense ? DENSE_NON_CARD_ROW_TRAILING_GAP : NON_CARD_ROW_TRAILING_GAP
+}
 const IMPORTED_WORKTREES_LINE_ROW_HEIGHT = 36
+const DENSE_IMPORTED_WORKTREES_LINE_ROW_HEIGHT = 20
 const PENDING_CREATION_ROW_HEIGHT = 56
 const FOLDER_WORKSPACE_ROW_HEIGHT = 64
 
@@ -27,9 +38,12 @@ export function estimateRenderRowSize(
   rows: readonly RenderRow[],
   index: number,
   firstHeaderIndex: number,
-  _activeStickyHeaderIndex: number | null
+  _activeStickyHeaderIndex: number | null,
+  dense = false
 ): number {
   const row = rows[index]
+  const gap = getNonCardRowTrailingGap(dense)
+  const headerTopMargin = dense ? DENSE_GROUP_HEADER_TOP_MARGIN : SECONDARY_GROUP_HEADER_TOP_MARGIN
   if (row?.type === 'host-header') {
     return (
       HOST_HEADER_ROW_HEIGHT +
@@ -45,19 +59,21 @@ export function estimateRenderRowSize(
   }
   if (row?.type === 'header') {
     return (
-      GROUP_HEADER_ROW_HEIGHT +
-      6 +
+      (dense ? DENSE_GROUP_HEADER_ROW_HEIGHT : GROUP_HEADER_ROW_HEIGHT) +
+      gap +
       (shouldUseHeaderTopSpacing({
         rows,
         index,
         firstHeaderIndex
       })
-        ? SECONDARY_GROUP_HEADER_TOP_MARGIN
+        ? headerTopMargin
         : 0)
     )
   }
   if (row?.type === 'imported-worktrees-card' || row?.type === 'new-external-worktrees-inbox') {
-    return IMPORTED_WORKTREES_LINE_ROW_HEIGHT + 6
+    return (
+      (dense ? DENSE_IMPORTED_WORKTREES_LINE_ROW_HEIGHT : IMPORTED_WORKTREES_LINE_ROW_HEIGHT) + gap
+    )
   }
   if (row?.type === 'pending-creation') {
     return PENDING_CREATION_ROW_HEIGHT + 6

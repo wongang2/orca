@@ -1,4 +1,5 @@
 import React from 'react'
+import { selectDenseSidebar } from '@/store/appearance/sidebar-density'
 import { callBotRpc } from '@/lib/bot-hosts'
 import { Trash2, Users } from 'lucide-react'
 import { toast } from 'sonner'
@@ -46,6 +47,7 @@ export function BotGroupRow({
   const t = useTranslate()
   const workspaceId = folderWorkspaceKey(home.id)
   const now = useNow(60_000)
+  const dense = useAppStore(selectDenseSidebar)
   // Rerun on every store change, so a freshness epoch bump re-reads the clock.
   const status = useAppStore((state) =>
     botGroupStatus(group, state.agentStatusByPaneKey, Date.now())
@@ -60,8 +62,8 @@ export function BotGroupRow({
       avatar={
         <BotGroupFaces
           faces={botGroupFaces(members, (bot) => bot.id)}
-          className="size-8"
-          slot={32}
+          className={dense ? 'size-6' : 'size-8'}
+          slot={dense ? 24 : 32}
         />
       }
       name={group.name}

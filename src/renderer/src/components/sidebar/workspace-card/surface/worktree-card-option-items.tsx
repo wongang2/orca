@@ -20,6 +20,7 @@ import {
 } from '../../worktree-list/controls/sidebar-workspace-option-items'
 import { useTranslate } from '@/i18n/use-translate'
 import { selectDrawsNewWorktreeCards } from '@/store/appearance/worktree-card-style'
+import { selectDenseSidebar } from '@/store/appearance/sidebar-density'
 
 type CardMenuItemProps = {
   preserveWorkspaceBoardOpen: boolean
@@ -152,8 +153,25 @@ export function WorktreeCardLayoutMenuItem({
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DenseSidebarMenuItem />
       </DropdownMenuSubContent>
     </DropdownMenuSub>
+  )
+}
+
+function DenseSidebarMenuItem(): React.JSX.Element {
+  const t = useTranslate()
+  const dense = useAppStore(selectDenseSidebar)
+  const updateSettings = useAppStore((s) => s.updateSettings)
+  return (
+    <DropdownMenuCheckboxItem
+      checked={dense}
+      onCheckedChange={(checked) => void updateSettings({ denseSidebar: checked === true })}
+      onSelect={(e) => e.preventDefault()}
+    >
+      {t('sidebar.density.dense', 'Dense sidebar')}
+    </DropdownMenuCheckboxItem>
   )
 }
 

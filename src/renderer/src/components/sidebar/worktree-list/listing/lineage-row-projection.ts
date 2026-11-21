@@ -1,5 +1,6 @@
 import { useAppStore } from '@/store'
 import { useMemo } from 'react'
+import { selectDenseSidebar } from '@/store/appearance/sidebar-density'
 import type { ExecutionHostId } from '../../../../../../shared/execution-host/execution-host'
 import { getRenderRowKey, type RenderRow } from './render-row'
 import {
@@ -38,8 +39,11 @@ export function buildLineageRowProjection(
   rows: readonly RenderRow[],
   groupBy: WorktreeGroupBy,
   newCardStyle: boolean,
-  statusLane = newCardStyle
+  statusLane = newCardStyle,
+  dense = false
 ) {
+  // Gap between sibling workspace families; dense keeps a hairline so rows stay distinct.
+  const familyGap = dense ? 2 : 6
   const rowIndexByKey = new Map<string, number>()
   const rowKeys: string[] = []
   const frames: LineageRowFrame[] = []
@@ -74,7 +78,7 @@ export function buildLineageRowProjection(
       right: 0,
       contentIndent: 0,
       before: 0,
-      after: 6,
+      after: familyGap,
       closing: 0
     }
     if (isWorkspace) {
@@ -148,7 +152,7 @@ export function buildLineageRowProjection(
       frames[frame.end].closing += 7
     }
     const next = frames[index + 1]
-    frame.after = next?.root === frame.root ? 0 : 6
+    frame.after = next?.root === frame.root ? 0 : familyGap
   })
   return { frames, occurrencesByIdentity, rowIndexByKey, restoreSignal: JSON.stringify(rowKeys) }
 }
@@ -176,9 +180,10 @@ export function useLineageRowProjection(args: {
 }) {
   const { rows, groupBy, newCardStyle, activeWorktreeId, activeWorkspaceExecutionHostId } = args
   const statusLane = useAppStore((s) => s.worktreeCardProperties.includes('status')) && newCardStyle
+  const dense = useAppStore(selectDenseSidebar)
   const projection = useMemo(
-    () => buildLineageRowProjection(rows, groupBy, newCardStyle, statusLane),
-    [rows, groupBy, newCardStyle, statusLane]
+    () => buildLineageRowProjection(rows, groupBy, newCardStyle, statusLane, dense),
+    [rows, groupBy, newCardStyle, statusLane, dense]
   )
   const firstHeaderIndex = useMemo(
     () => rows.findIndex((row) => row.type === 'header' || row.type === 'host-header'),
